@@ -1,0 +1,17 @@
+#!/bin/bash
+# This script will find a suitable vitis executable and call the appropriate script file with it.
+
+# Get the directory containing the script
+script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Ensure Vitis is in the PATH
+if ! command -v vitis 2>&1 >/dev/null
+then
+    echo "ERROR: [Vitis:Do-9] Vitis could not be found, make sure it is added to the system PATH"
+    exit 1
+else
+    echo "INFO: [Vitis:Do-12] Vitis found in system PATH"
+fi
+
+# Launch the Vitis Python CLI
+vitis -s "$script_dir/launch.py $@" # POSIX-compliant

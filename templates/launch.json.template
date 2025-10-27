@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "tcf-debug",
+      "request": "launch",
+      "name": "{{config_name}}",
+      "debugType": "{{debug_type}}",
+      "attachToRunningTargetOptions": {
+        "targetSetupMode": "standalone",
+        "executeScript": true,
+        "scriptPath": ""
+      },
+      "autoAttachProcessChildren": false,
+      "target": {
+        "targetConnectionId": "Local",
+        "peersIniPath": "../../../.wsdata/.peers.ini",
+        "context": "{{context}}"
+      },
+      "targetSetup": {
+        "resetSystem": {{reset_system}},
+        "programDevice": {{program_device}},
+        "resetAPU": {{reset_apu}},
+        "bitstreamFile": "{{bitstream_file}}",
+        "zynqInitialization": {
+          "isFsbl": false,
+          "usingFSBL": {
+            "initWithFSBL": true,
+            "fsblFile": "{{fsbl_file}}",
+            "fsblExitSymbol": "FsblHandoffJtagExit"
+          },
+          "usingPs7Init": {
+            "runPs7Init": true,
+            "runPs7PostInit": true,
+            "ps7InitTclFile": "{{ps_init_tcl}}"
+          }
+        },
+        "downloadElf": [
+          {
+            "core": "{{target_core}}",
+            "resetProcessor": {{reset_processor}},
+            "elfFile": "{{elf_file}}",
+            "stopAtEntry": {{stop_at_entry}}
+          }
+        ],
+        "crossTriggerBreakpoints": {
+          "isSelected": false,
+          "breakpoints": []
+        }
+      },
+      "internalConsoleOptions": "openOnSessionStart"
+    }
+  ]
+}
