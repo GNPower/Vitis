@@ -35,7 +35,7 @@ src/
 │   ├── vitis_paths.py               # Path utilities
 │   ├── vitis_logging.py             # Logging configuration
 │   └── templates/                   # JSON templates
-│       └── <varous templates>       # Various templates for quickstart
+│       └── <varous templates>       # Various templates for easy quickstart
 ├── Projects/                        # Generated projects (gitignore this)
 │   └── <generated projects>
 └── Top/                             # Your project configurations
