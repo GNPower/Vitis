@@ -143,24 +143,68 @@ def get_library_path(lib_name: str, lib_version: str) -> str:
 def get_driver_path(driver_name: str, driver_version: str) -> str:
     """
     Build path to a Vitis driver.
-    
+
     Args:
         driver_name: Driver name (e.g., 'ttcps', 'gpio')
         driver_version: Driver version (e.g., 'v3_19')
-    
+
     Returns:
         str: Full path to driver
     """
     vitis_root, _ = get_vitis_root()
-    
+
     driver_path = os.path.join(
         vitis_root, "data", "embeddedsw", "XilinxProcessorIPLib", "drivers",
         f"{driver_name}_{driver_version}"
     )
-    
+
     if not os.path.exists(driver_path):
         raise FileNotFoundError(
             f"Driver {driver_name}_{driver_version} not found in Vitis installation"
         )
-    
+
     return driver_path
+
+
+def normalize_path(path: str) -> str:
+    """
+    Normalize path to use forward slashes (CMake-compatible).
+
+    Args:
+        path: Path with any separator style
+
+    Returns:
+        str: Path with forward slashes
+    """
+    return path.replace('\\', '/')
+
+
+def get_vitis_install_dir() -> str:
+    """
+    Get Vitis installation directory with forward slashes (CMake-compatible).
+
+    Returns:
+        str: Vitis installation root path (e.g., 'E:/Xilinx/Vitis/2024.1')
+    """
+    vitis_root, _ = get_vitis_root()
+    return normalize_path(vitis_root)
+
+
+def get_workspace_root() -> str:
+    """
+    Get workspace root directory (src/Projects) with forward slashes.
+
+    Returns:
+        str: Workspace root path
+    """
+    return normalize_path(PROJECTS_PATH)
+
+
+def get_src_root() -> str:
+    """
+    Get source root directory (src/) with forward slashes.
+
+    Returns:
+        str: Source root path
+    """
+    return normalize_path(SRC_PATH)

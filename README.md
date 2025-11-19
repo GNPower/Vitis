@@ -199,9 +199,28 @@ TEMPLATE = Hello World                # Optional: Vitis template
 defined = DEBUG,CUSTOM_FLAG           # Comma-separated defines
 undefined = NDEBUG                    # Comma-separated undefines
 
-# Include directories
+# Include directories - Supports multi-line format and variable expansion
 [compiler.directories]
-include_paths = ../common/inc,./inc   # Comma-separated paths
+include_paths = ../common/inc,./inc   # Single-line format (comma-separated)
+
+# Multi-line format example:
+# include_paths =
+#     ${PARENT_DIR}/DAM_LIB_FW/include,
+#     ${PROJECT_DIR}/my_platform/bsp/include
+#     ${VITIS_INSTALL_DIR}/gnu/aarch32/lin/gcc-arm-none-eabi/include
+
+# Source files - Compile .c files from custom locations
+[compiler.sources]
+source_files =                        # Multi-line, comma-separated source files
+# Example:
+#     ${PARENT_DIR}/DAM_LIB_FW/src/uart.c
+#     ${PARENT_DIR}/custom_code/main.c
+
+# Source folders - Recursively include all .c and .S files
+source_folders =                      # Multi-line, comma-separated directory paths
+# Example:
+#     ${PARENT_DIR}/DAM_LIB_FW/src
+#     ${PARENT_DIR}/PLDProcessorIPLib/Zynq7000/drivers
 
 # Optimization
 [compiler.optimization]
@@ -229,11 +248,14 @@ other_flags =                         # Other custom flags
 # Linker libraries
 [linker.libraries]
 libraries = m,pthread                 # Comma-separated library names
-search_paths = /opt/lib               # Comma-separated search paths
+search_paths = /opt/lib               # Multi-line and variable expansion supported
+# Example:
+#     ${PROJECT_DIR}/my_platform/bsp/lib
+#     ${PARENT_DIR}/custom_libs
 
-# Linker script
+# Linker script - Supports variable expansion
 [linker.script]
-file = ../lscript.ld                  # Path to linker script
+file = ${CMAKE_SOURCE_DIR}/lscript.ld # Path to linker script (supports variables)
 
 # General linker settings
 [linker.general]
@@ -281,6 +303,85 @@ stop_at_entry = false                # Stop at main entry
 ```
 
 ## Advanced Features
+
+### Path Variables and Multi-line Format
+
+The tool supports custom path variables and multi-line format for include directories, library search paths, source files, and linker scripts.
+
+#### Supported Variables
+
+- `${VITIS_INSTALL_DIR}` - Expands to your Vitis installation root (e.g., `E:/Xilinx/Vitis/2024.1`)
+- `${PROJECT_DIR}` - Expands to the workspace root (`src/Projects`)
+- `${PARENT_DIR}` - Expands to the source root (`src/`)
+- `${CMAKE_SOURCE_DIR}` - CMake variable (not expanded by Python, evaluated at build time)
+
+Variables are expanded with forward slashes for cross-platform CMake compatibility.
+
+#### Multi-line Format
+
+Path lists can be specified using:
+- Commas only: `path1,path2,path3`
+- Newlines only:
+  ```ini
+  paths =
+      path1
+      path2
+      path3
+  ```
+- Mixed format (commas and newlines):
+  ```ini
+  paths =
+      path1,
+      path2
+      path3
+  ```
+
+#### Example: Including BSP Headers
+
+```ini
+[compiler.directories]
+include_paths =
+    ${PARENT_DIR}/DAM_LIB_FW/include,
+    ${PROJECT_DIR}/ZedBoard_platform/zynq_fsbl/bsp/ps7_cortexa9_0/include
+    ${VITIS_INSTALL_DIR}/gnu/aarch32/lin/gcc-arm-none-eabi/arm-none-eabi/include
+```
+
+#### Example: Compiling Source from /src Directory
+
+By default, Vitis expects application source files in the generated project directory. To compile `.c` files from your custom `/src` directories:
+
+```ini
+[compiler.sources]
+source_files =
+    ${PARENT_DIR}/DAM_LIB_FW/src/uart.c
+    ${PARENT_DIR}/DAM_LIB_FW/src/timer.c,
+    ${PARENT_DIR}/custom_code/main.c
+```
+
+This allows you to keep your source code in version control under `/src` while the generated projects remain in the gitignored `/src/Projects` directory.
+
+#### Example: Including Entire Source Directories
+
+To include all `.c` and `.S` files from directories recursively:
+
+```ini
+[compiler]
+source_folders =
+    ${PARENT_DIR}/DAM_LIB_FW/src
+    ${PARENT_DIR}/PLDProcessorIPLib/Zynq7000/drivers
+```
+
+This will:
+- Recursively find all `.c` and `.S` files in specified directories
+- Create folder symlinks in the project (preserves directory structure)
+- Fall back to recreating directory structure with file symlinks on Windows if folder symlinks fail
+- Keep your Vitis IDE project organized with proper hierarchy
+
+**Difference between `source_files` and `source_folders`:**
+- **`source_files`**: Individual files placed flat in `<project>/src/filename.c` - good for a few specific files
+- **`source_folders`**: Entire directories with preserved structure in `<project>/src/foldername/...` - good for including many files while keeping organization
+
+Both can be used together in the same configuration.
 
 ### Multiple Applications
 
@@ -397,10 +498,6 @@ Detailed logs are written to `src/Vitis/logs/workspace_builder.log` for debuggin
 - **Supported Platforms:** Currently only supports creating platforms from XSA files. Fixed platforms and platform-to-platform creation are not yet implemented.
 - **Operating Systems:** Tested on Linux and Windows (via Git Bash/WSL). Native Windows command prompt may have issues.
 
-## Contributing
-
-Contributions are welcome! Please submit issues and pull requests on GitHub.
-
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
@@ -420,7 +517,3 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
-
-## Acknowledgments
-
-Built for AMD/Xilinx Vitis embedded development workflows.
