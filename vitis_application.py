@@ -516,6 +516,7 @@ class VitisApplication(object):
 
         self.__configure_compiler()
         self.__configure_sources()
+        self.__configure_cmake()
         self.__configure_linker()
         self.__configure_launch()
 
@@ -715,6 +716,48 @@ class VitisApplication(object):
                     log.warning(f"Project src directory not found: {project_src_dir}")
 
         log.debug("Source files configured successfully")
+
+    def __configure_cmake(self) -> None:
+        """Modify CMakeLists.txt to use recursive source discovery.
+
+        Replaces aux_source_directory() with file(GLOB_RECURSE ...) to find
+        source files in subdirectories like drivers/uart/src/.
+        """
+        log.debug("Configuring CMakeLists.txt for recursive source discovery")
+
+        cmake_path = os.path.join(
+            self.__workspace_path,
+            self.__name,
+            "src",
+            "CMakeLists.txt"
+        )
+
+        if not os.path.exists(cmake_path):
+            log.warning(f"CMakeLists.txt not found at {cmake_path}, skipping CMake configuration")
+            return
+
+        with open(cmake_path, 'r') as f:
+            content = f.read()
+
+        # Replace aux_source_directory with GLOB_RECURSE
+        old_pattern = r'aux_source_directory\(\$\{CMAKE_SOURCE_DIR\}\s+_sources\)'
+        new_code = '''file(GLOB_RECURSE _sources
+    FOLLOW_SYMLINKS
+    ${CMAKE_SOURCE_DIR}/*.c
+    ${CMAKE_SOURCE_DIR}/*.S
+)'''
+
+        new_content = re.sub(old_pattern, new_code, content)
+
+        # Check if replacement was made
+        if new_content == content:
+            log.debug("CMakeLists.txt already configured or pattern not found")
+            return
+
+        with open(cmake_path, 'w') as f:
+            f.write(new_content)
+
+        log.info("CMakeLists.txt modified to use recursive source discovery (GLOB_RECURSE)")
 
     def __configure_linker(self) -> None:
         """Configure linker settings in UserConfig.cmake."""
