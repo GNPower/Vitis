@@ -911,10 +911,90 @@ class VitisApplication(object):
 
         log.debug("Launch settings configured successfully")
 
+    def __create_common_clangd(self) -> None:
+        """
+        Create/update .clangd at common parent of all source directories.
+        Also create/update symlink to compile_commands.json at common parent.
+        This makes the current project the "active" one for linting.
+        """
+        log.debug("Creating/updating common .clangd configuration")
+
+        # Collect all source paths
+        source_paths = []
+
+        # Add source folders
+        if self.__source_folders:
+            source_paths.extend(self.__source_folders)
+
+        # Add source files directories
+        if self.__source_files:
+            source_paths.extend([os.path.dirname(f) for f in self.__source_files])
+
+        # Add project directory
+        project_dir = os.path.join(self.__workspace_path, self.__name)
+        source_paths.append(project_dir)
+
+        if not source_paths:
+            log.warning("No source paths found, cannot determine common parent")
+            return
+
+        # Find common parent of all source paths
+        common_parent = os.path.commonpath(source_paths)
+        log.info(f"Common parent for source files: {common_parent}")
+
+        # Create/update .clangd at common parent
+        clangd_path = os.path.join(common_parent, ".clangd")
+        clangd_content = """CompileFlags:
+    Add: [-Wno-unknown-warning-option, -U__linux__, -U__clang__]
+    Remove: [-m*, -f*]
+"""
+
+        try:
+            with open(clangd_path, 'w') as f:
+                f.write(clangd_content)
+            log.info(f"Created/updated .clangd at {clangd_path}")
+        except Exception as e:
+            log.warning(f"Failed to create .clangd at {clangd_path}: {e}")
+            return
+
+        # Create/update symlink to compile_commands.json at common parent
+        compile_db_dest = os.path.join(common_parent, "compile_commands.json")
+        compile_db_src = os.path.join(project_dir, "compile_commands.json")
+
+        if not os.path.exists(compile_db_src):
+            log.warning(f"compile_commands.json not found at {compile_db_src}")
+            return
+
+        # Remove old symlink/file if exists
+        if os.path.exists(compile_db_dest) or os.path.islink(compile_db_dest):
+            try:
+                os.remove(compile_db_dest)
+                log.debug(f"Removed existing compile_commands.json at {compile_db_dest}")
+            except Exception as e:
+                log.warning(f"Failed to remove old compile_commands.json: {e}")
+
+        # Try to create symlink, fallback to copy if not supported
+        try:
+            rel_path = os.path.relpath(compile_db_src, common_parent)
+            os.symlink(rel_path, compile_db_dest)
+            log.info(f"Created symlink: {compile_db_dest} -> {rel_path}")
+        except (OSError, NotImplementedError) as e:
+            # Symlink not supported (Windows without admin) - copy instead
+            log.debug(f"Symlink not available ({e}), copying instead")
+            try:
+                shutil.copy2(compile_db_src, compile_db_dest)
+                log.info(f"Copied compile_commands.json to {common_parent}")
+            except Exception as e:
+                log.warning(f"Failed to copy compile_commands.json: {e}")
+
     def build(self) -> None:
         """Build the application component."""
         log.info(f"Building application {self.__name}")
         app = self.__client.get_component(name=self.__name)
         status = app.build()
         log.info(f"Application {self.__name} build completed with status: {status}")
+
+        # Create/update common .clangd and compilation database after build
+        self.__create_common_clangd()
+
         return status
