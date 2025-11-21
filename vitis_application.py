@@ -494,7 +494,7 @@ class VitisApplication(object):
         # If template is specified, pass it to create from template
         if template:
             log.debug(f"Using template: {template}")
-            self.__application = self.__client.create_app_component(
+            self.__application = self.__client.create_app_component( # type: ignore
                 name=self.__name,
                 platform=platform_path,
                 domain=domain_name,
@@ -502,7 +502,7 @@ class VitisApplication(object):
             )
         else:
             log.debug("Creating empty application (no template)")
-            self.__application = self.__client.create_app_component(
+            self.__application = self.__client.create_app_component( # type: ignore
                 name=self.__name,
                 platform=platform_path,
                 domain=domain_name
@@ -919,16 +919,24 @@ class VitisApplication(object):
         """
         log.debug("Creating/updating common .clangd configuration")
 
-        # Collect all source paths
+        # Collect all source paths from configuration
         source_paths = []
 
-        # Add source folders
-        if self.__source_folders:
-            source_paths.extend(self.__source_folders)
+        # Add source folders from config
+        if self.__config.has_option("compiler", "source_folders"):
+            folders = self.__config.get("compiler", "source_folders").strip()
+            if folders:
+                folder_list = _parse_multiline_paths(folders)
+                expanded_folders = [_expand_path_variables(f) for f in folder_list]
+                source_paths.extend(expanded_folders)
 
-        # Add source files directories
-        if self.__source_files:
-            source_paths.extend([os.path.dirname(f) for f in self.__source_files])
+        # Add source files directories from config
+        if self.__config.has_option("compiler", "source_files"):
+            sources = self.__config.get("compiler", "source_files").strip()
+            if sources:
+                source_list = _parse_multiline_paths(sources)
+                expanded_sources = [_expand_path_variables(s) for s in source_list]
+                source_paths.extend([os.path.dirname(f) for f in expanded_sources])
 
         # Add project directory
         project_dir = os.path.join(self.__workspace_path, self.__name)
