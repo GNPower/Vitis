@@ -10,15 +10,35 @@ A configuration-driven tool for managing AMD/Xilinx Vitis embedded software proj
 - Comprehensive BSP configuration (libraries, drivers, compiler flags)
 - Automated compiler and linker settings via UserConfig.cmake
 - Debug launch configuration generation for VSCode/Theia IDE
-- Full project build automation
+- Full project build automation with multiple build backends
+  - Vitis server builds (full IDE integration)
+  - Direct Ninja builds (faster, CI/CD friendly)
+  - System Ninja support (no Vitis dependency for builds)
+- IDE tooling support (clangd IntelliSense, code completion)
+- Multi-project workspace with active project switching
 - Version control friendly - only configuration files and user source code need to be committed
 
 ## Requirements
 
+### For Project Creation
 - AMD/Xilinx Vitis 2024.1 or later
 - Vitis must be added to your system PATH
 - Python 3.x (included with Vitis)
 - Bash shell (Linux/WSL/Git Bash on Windows)
+
+### For Building (Optional: Choose one)
+- **Option A**: Use Vitis-bundled Ninja (default, always included)
+- **Option B**: Use system Ninja (≥1.5, recommended ≥1.11.1) with `--system-ninja` flag
+  - Windows: `choco install ninja`
+  - Linux: `sudo apt-get install ninja-build`
+  - macOS: `brew install ninja`
+
+### For CI/CD Builds (Without Vitis)
+If using pre-configured projects with `--system-ninja`:
+- ARM GNU Toolchain (12.2.Rel1 or compatible)
+- CMake (3.24.x or compatible)
+- Ninja (1.5+ from system PATH)
+- Platform export files (committed to repository)
 
 ## Project Structure
 
@@ -32,12 +52,17 @@ src/
 │   ├── vitis_create.py              # Project creation logic
 │   ├── vitis_platform.py            # Platform/domain management
 │   ├── vitis_application.py         # Application management
+│   ├── vitis_build.py               # Build and activate commands
 │   ├── vitis_paths.py               # Path utilities
 │   ├── vitis_logging.py             # Logging configuration
 │   └── templates/                   # JSON templates
 │       └── <varous templates>       # Various templates for easy quickstart
 ├── Projects/                        # Generated projects (gitignore this)
 │   └── <generated projects>
+│   └── <project_name>_platform/
+│       └── export/                  # Platform files (commit for CI/CD)
+├── .clangd                          # Auto-generated clangd config
+├── compile_commands.json            # Auto-generated (symlink to active project)
 └── Top/                             # Your project configurations
     └── ExampleProject/
         ├── vitis.conf               # Top-level project config
@@ -102,6 +127,89 @@ This will:
 5. Build the platform
 6. Build all applications
 7. Generate debug launch configurations
+
+#### ACTIVATE - Set Active Project for IDE Tooling
+Sets a project as "active" for IDE tooling (clangd IntelliSense). Updates `.clangd` and `compile_commands.json` at the common parent directory to provide correct code completion and navigation.
+
+```bash
+./Vitis/Do ACTIVATE <project_name>
+```
+
+**Example:**
+```bash
+./Vitis/Do ACTIVATE MyProject
+```
+
+This will:
+1. Updates `.clangd` configuration in the common source directory for the project
+2. Modified the `compile_commands.json` in the common source directory for the project
+2. Enables IntelliSense/code completion for shared library code when using Vitis IDE
+
+**When to use:**
+- After switching between multiple projects in your workspace
+- If IntelliSense shows errors for headers that should exist
+
+#### BUILD - Build Project
+Builds a project using either the Vitis server or directly with Ninja. Supports clean builds and automatic project activation.
+
+```bash
+./Vitis/Do BUILD <project_name> [OPTIONS]
+```
+
+**Options:**
+- `--tools {vitis|ninja}` - Build tool to use (default: `vitis`)
+  - `vitis`: Uses Vitis server (standard, IDE-integrated)
+  - `ninja`: Direct Ninja build (faster, no Vitis server needed)
+- `--clean` - Clean before building (ninja only)
+- `--system-ninja` - Use system Ninja from PATH instead of Vitis-bundled (requires Ninja ≥1.5)
+- `--no-activate` - Don't activate the project after building
+
+**Examples:**
+
+```bash
+# Standard Vitis server build
+./Vitis/Do BUILD MyProject
+
+# Fast Ninja build (no Vitis server required)
+./Vitis/Do BUILD MyProject --tools ninja
+
+# Clean build with Ninja
+./Vitis/Do BUILD MyProject --tools ninja --clean
+
+# Use system Ninja (CI/CD friendly, no Vitis dependency)
+./Vitis/Do BUILD MyProject --tools ninja --system-ninja
+
+# Build without activating the project
+./Vitis/Do BUILD MyProject --tools ninja --no-activate
+```
+
+**Ninja vs Vitis Builds:**
+
+| Feature | Vitis Build | Ninja Build |
+|---------|-------------|-------------|
+| Startup Time | ~10-20s | ~1s |
+| Vitis Required | ✅ Yes | ❌ No (with `--system-ninja`) |
+| IDE Integration | ✅ Full | ⚠️ Limited |
+| Incremental Builds | ✅ Yes | ✅ Yes (faster) |
+| CI/CD Friendly | ⚠️ Needs license | ✅ License-free |
+| Use Case | Development | CI/CD, Quick rebuilds |
+
+**System Ninja Installation:**
+
+To use `--system-ninja`, install Ninja independently:
+
+```bash
+# Windows
+choco install ninja
+
+# Linux
+sudo apt-get install ninja-build
+
+# macOS
+brew install ninja
+```
+
+**Minimum Ninja version:** 1.5 (recommended: 1.11.1+)
 
 ### Configuration File Reference
 
@@ -497,6 +605,86 @@ Detailed logs are written to `src/Vitis/logs/workspace_builder.log` for debuggin
 - **Vitis 2024.1 API Workaround:** The `domain.set_config()` API always returns errors in Vitis 2024.1, so this tool directly edits `bsp.yaml` files as a workaround.
 - **Supported Platforms:** Currently only supports creating platforms from XSA files. Fixed platforms and platform-to-platform creation are not yet implemented.
 - **Operating Systems:** Tested on Linux and Windows (via Git Bash/WSL). Native Windows command prompt may have issues.
+
+## CI/CD Integration
+
+### GitHub Actions Example
+
+Build firmware automatically without Vitis installation using the "Platform-in-Repo" strategy:
+
+#### Prerequisites
+1. Commit platform export files to your repository:
+   ```bash
+   git add src/Projects/MyProject_platform/export/
+   git commit -m "Add platform files for CI/CD"
+   ```
+
+2. Create `.github/workflows/build.yml`:
+
+```yaml
+name: Build Firmware
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install ARM Toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '12.2.Rel1'
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+
+      - name: Verify Tools
+        run: |
+          arm-none-eabi-gcc --version
+          cmake --version
+          ninja --version
+
+      - name: Build Firmware
+        run: |
+          ./Vitis/Do BUILD MyProject --tools ninja --system-ninja
+
+      - name: Check Binary Size
+        run: |
+          arm-none-eabi-size src/Projects/MyProject/build/MyProject.elf
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v3
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            src/Projects/MyProject/build/MyProject.elf
+          retention-days: 90
+```
+
+#### Benefits
+- ✅ **No Vitis license** required in CI/CD
+- ✅ **Fast builds** (2-5 minutes vs 30+ with Vitis)
+- ✅ **GitHub-hosted runners** (no self-hosted required)
+- ✅ **Small platform files** (~15MB, version controlled)
+- ✅ **Reproducible builds** across all environments
+
+#### Alternative: Self-Hosted with Vitis
+For teams that need to regenerate platforms in CI/CD:
+- Use self-hosted runners with Vitis Embedded (12-15 GB)
+- Configure license server access
+- Use Vitis builds: `./Vitis/Do BUILD MyProject`
 
 ## License
 

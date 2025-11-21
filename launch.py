@@ -9,6 +9,7 @@ vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import *
 from vitis_create import create_workspace, ProjectCreator
+from vitis_build import activate_project, build_project_ninja, build_project_vitis
 
 
 def project_creator_wrapper(client: vitis_client, args: argparse.Namespace) -> None:
@@ -24,46 +25,137 @@ def create_application_wrapper(client: vitis_client, args: argparse.Namespace) -
     pass
 
 
+def activate_project_wrapper(args: argparse.Namespace) -> None:
+    """Wrapper for ACTIVATE command (no Vitis client needed)."""
+    success = activate_project(args.name)
+    if not success:
+        sys.exit(1)
+
+
+def build_project_wrapper(args: argparse.Namespace, client: vitis_client = None) -> None:
+    """Wrapper for BUILD command."""
+    tools = args.tools
+
+    if tools == "ninja":
+        # Direct ninja build - no Vitis client needed
+        use_system = getattr(args, 'system_ninja', False)
+        exit_code = build_project_ninja(args.name, clean=args.clean, use_system_ninja=use_system)
+    else:
+        # Vitis server build
+        exit_code = build_project_vitis(client, args.name)
+
+    # Activate the project after build (unless --no-activate)
+    if exit_code == 0 and args.activate:
+        activate_project(args.name)
+
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
 def launch_client():
     parser = argparse.ArgumentParser(
         prog="Vitis Workspace Builder"
     )
-    subparser = parser.add_subparsers()
+    subparser = parser.add_subparsers(dest='command')
 
+    # CREATE command
     create = subparser.add_parser("CREATE", help="Creates a project and all constituant parts from configuration files")
     create.add_argument("name", type=str, help="Name of the project, must be a subfolder in the Top directory")
-    create.set_defaults(func=project_creator_wrapper)
+    create.set_defaults(func=project_creator_wrapper, needs_client=True)
 
+    # CREATE_PLATFORM command
     create_p = subparser.add_parser("CREATE_PLATFORM", help="Creates a platform project")
     create_p.add_argument("name", type=str, help="Base name of the platform project. '_platform' will be appended")
-    create_p.set_defaults(func=create_platform_wrapper)
+    create_p.set_defaults(func=create_platform_wrapper, needs_client=True)
 
+    # CREATE_APP command
     create_a = subparser.add_parser("CREATE_APP", help="Creates an application project")
     create_a.add_argument("name", type=str, help="Base name of the application project. '_application' will be appended")
     create_a.add_argument("-p", "--platform", type=str, help="Name of the platform project to reference, specified without the '_platform' suffix")
-    create_a.set_defaults(func=create_application_wrapper)
+    create_a.set_defaults(func=create_application_wrapper, needs_client=True)
+
+    # ACTIVATE command (no Vitis client needed)
+    activate = subparser.add_parser("ACTIVATE", help="Sets a project as active for IDE tooling (clangd IntelliSense)")
+    activate.add_argument("name", type=str, help="Name of the project to activate")
+    activate.set_defaults(func=activate_project_wrapper, needs_client=False)
+
+    # BUILD command
+    build = subparser.add_parser("BUILD", help="Builds a project using Vitis server or directly with Ninja")
+    build.add_argument("name", type=str, help="Name of the project to build")
+    build.add_argument("--tools", type=str, choices=["vitis", "ninja"], default="vitis",
+                       help="Build tool to use: 'vitis' (default) or 'ninja' (direct, faster)")
+    build.add_argument("--clean", action="store_true", help="Clean before building (ninja only)")
+    build.add_argument("--system-ninja", action="store_true", dest="system_ninja",
+                       help="Use system ninja from PATH instead of Vitis-bundled (requires ninja >=1.5, ninja builds only)")
+    build.add_argument("--no-activate", dest="activate", action="store_false", default=True,
+                       help="Don't activate the project after building")
+    build.set_defaults(func=build_project_wrapper, needs_client=True)  # May need client for vitis builds
 
     args = parser.parse_args()
 
-    # Create a Vitis client object
-    log.info("Creating the Vitis client")
-    client = vitis.create_client() 
+    # Check if command was provided
+    if not hasattr(args, 'func'):
+        parser.print_help()
+        sys.exit(1)
 
-    log.info("Creating SDK workspace")
-    create_workspace(client)
-    
-    args.func(client=client, args=args)
+    # Determine if we need Vitis client
+    needs_client = getattr(args, 'needs_client', True)
+
+    # Special case: BUILD with --tools ninja doesn't need client
+    if args.command == 'BUILD' and args.tools == 'ninja':
+        needs_client = False
+
+    if needs_client:
+        # Create a Vitis client object
+        log.info("Creating the Vitis client")
+        client = vitis.create_client()
+
+        log.info("Creating SDK workspace")
+        create_workspace(client)
+
+        # Call with client for commands that need it
+        if args.command == 'BUILD':
+            args.func(args=args, client=client)
+        else:
+            args.func(client=client, args=args)
+    else:
+        # Commands that don't need Vitis client
+        log.info(f"Running {args.command} (no Vitis client required)")
+        if args.command == 'BUILD':
+            args.func(args=args, client=None)
+        else:
+            args.func(args=args)
 
 
 if __name__ == '__main__':
     cleanupLatestLog()
     log = Logger("launch")
+    _vitis_client_created = False
 
     try:
+        # Check if command needs Vitis client before launching
+        # Parse args early to determine if we need Vitis client
+        import sys as _sys
+        _args = _sys.argv[1:] if len(_sys.argv) > 1 else []
+        _command = _args[0] if _args else None
+        _needs_vitis = True
+
+        if _command == 'ACTIVATE':
+            _needs_vitis = False
+        elif _command == 'BUILD' and '--tools' in _args:
+            _tools_idx = _args.index('--tools')
+            if _tools_idx + 1 < len(_args) and _args[_tools_idx + 1] == 'ninja':
+                _needs_vitis = False
+
         launch_client()
+        _vitis_client_created = _needs_vitis
     except Exception as e:
         log.critical(f"The following error causes the Vitis client to exit:\n{e}")
+        _vitis_client_created = True  # Assume client may have been created
 
-    log.info("Finished processing, disposing of Vitis client")
+    log.info("Finished processing")
     sys.stdout.flush()
-    vitis.dispose()
+
+    if _vitis_client_created:
+        log.info("Disposing of Vitis client")
+        vitis.dispose()
