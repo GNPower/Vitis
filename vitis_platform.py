@@ -24,7 +24,7 @@ def _edit_bsp_yaml_value(bsp_yaml_path: str, param_name: str, new_value: str) ->
     """
     Directly edit a value in bsp.yaml file.
 
-    This is a workaround for the broken domain.set_config() API in Vitis 2024.1.
+    This is a workaround for domain.set_config() API in Vitis 2024.1 seemingly not working.
 
     Args:
         bsp_yaml_path: Path to the bsp.yaml file
@@ -39,19 +39,16 @@ def _edit_bsp_yaml_value(bsp_yaml_path: str, param_name: str, new_value: str) ->
     in_target_param = False
 
     for line in lines:
-        # Check if we're in the target parameter section
         if f'{param_name}:' in line and param_name in line:
             in_target_param = True
             new_lines.append(line)
         elif in_target_param and 'value:' in line:
-            # Replace the value line
             indent = len(line) - len(line.lstrip())
             new_lines.append(' ' * indent + f"value: '{new_value}'")
             in_target_param = False
         else:
             new_lines.append(line)
 
-    # Mark config as needing regeneration
     final_lines = []
     for line in new_lines:
         if line.startswith('config:'):
@@ -65,7 +62,7 @@ def _edit_bsp_yaml_value(bsp_yaml_path: str, param_name: str, new_value: str) ->
 
 class VitisPlatformDomain(object):
 
-    def __init__(self, client: vitis_client, platform_name: str, name: str, display_name: str, processor_instance: str, config: configparser.ConfigParser, workspace_path: str):
+    def __init__(self, client: vitis_client, platform_name: str, name: str, display_name: str, processor_instance: str, config: configparser.ConfigParser, workspace_path: str): # pyright: ignore[reportInvalidTypeVarUse]
         self.__client = client
         self.__platform_name = platform_name
         self.__name = name
@@ -87,7 +84,9 @@ class VitisPlatformDomain(object):
     
 
     def create(self) -> None:
-        platform = self.__client.get_component(name=self.__platform_name)
+        platform = self.__client.get_component( # type: ignore
+            name=self.__platform_name
+        )
         status = platform.add_domain(
             cpu = self.__processor_instance, 
             os = self.__config.get("domain", "OS"), 
@@ -100,17 +99,16 @@ class VitisPlatformDomain(object):
         """Configure the domain with compiler, OS, library, and driver settings."""
         log.info(f"Configuring domain {self.__name}")
 
-        # Get the domain object
-        platform = self.__client.get_component(name=self.__platform_name)
+        platform = self.__client.get_component( # type: ignore
+            name=self.__platform_name
+        )
         domain = platform.get_domain(name=self.__name)
 
-        # Configure each aspect if present in config
         self.__configure_compiler(domain)
         self.__configure_os(domain)
         self.__configure_libraries(domain)
         self.__configure_drivers(domain)
 
-        # Regenerate the BSP to apply all configuration changes
         try:
             log.debug(f"Regenerating BSP for domain {self.__name}")
             domain.regenerate()
@@ -128,7 +126,6 @@ class VitisPlatformDomain(object):
             flags = self.__config.get("compiler", "flags")
             log.debug(f"Setting compiler flags: {flags}")
             try:
-                # WORKAROUND: domain.set_config() is broken in Vitis 2024.1
                 bsp_yaml_path = self.__get_bsp_yaml_path()
                 _edit_bsp_yaml_value(bsp_yaml_path, "proc_extra_compiler_flags", f" {flags}")
                 log.debug(f"Successfully set compiler flags: {flags}")
@@ -145,24 +142,20 @@ class VitisPlatformDomain(object):
         os_name = self.__config.get("domain", "OS")
         bsp_yaml_path = self.__get_bsp_yaml_path()
 
-        # Configure stdin
         if self.__config.has_option("os", "stdin"):
             stdin = self.__config.get("os", "stdin")
             log.debug(f"Setting stdin to {stdin}")
             try:
-                # WORKAROUND: domain.set_config() is broken in Vitis 2024.1
                 _edit_bsp_yaml_value(bsp_yaml_path, f"{os_name}_stdin", stdin)
                 log.debug(f"Successfully set stdin to {stdin}")
             except Exception as e:
                 log.error(f"Failed to set stdin to '{stdin}': {e}")
                 raise
 
-        # Configure stdout
         if self.__config.has_option("os", "stdout"):
             stdout = self.__config.get("os", "stdout")
             log.debug(f"Setting stdout to {stdout}")
             try:
-                # WORKAROUND: domain.set_config() is broken in Vitis 2024.1
                 _edit_bsp_yaml_value(bsp_yaml_path, f"{os_name}_stdout", stdout)
                 log.debug(f"Successfully set stdout to {stdout}")
             except Exception as e:
@@ -172,18 +165,15 @@ class VitisPlatformDomain(object):
 
     def __configure_libraries(self, domain) -> None:
         """Configure libraries from numbered [library_N] sections."""
-        # Find all library sections
         library_sections = [s for s in self.__config.sections() if re.match(r"library_\d+", s)]
 
         for section in sorted(library_sections):
-            # Validate required field: name
             if not self.__config.has_option(section, "name"):
                 log.warning(f"Library section [{section}] missing required field 'name', skipping")
                 continue
 
             lib_name = self.__config.get(section, "name")
 
-            # Check if library has a version (external library)
             if self.__config.has_option(section, "version"):
                 lib_version = self.__config.get(section, "version")
                 try:
@@ -198,7 +188,6 @@ class VitisPlatformDomain(object):
                     log.error(f"Failed to set library {lib_name}_{lib_version}: {e}")
                     continue
 
-            # Check if library should be enabled/disabled (built-in library)
             elif self.__config.has_option(section, "enabled"):
                 enabled = self.__config.getboolean(section, "enabled")
                 if not enabled:
@@ -210,14 +199,12 @@ class VitisPlatformDomain(object):
                         log.error(f"Failed to remove library {lib_name}: {e}")
                         continue
 
-            # Configure library parameters (param_* options)
             for option in self.__config.options(section):
                 if option.startswith("param_"):
                     param_name = option[6:]  # Remove 'param_' prefix
                     param_value = self.__config.get(section, option)
                     log.debug(f"Setting {lib_name} parameter {param_name} = {param_value}")
                     try:
-                        # WORKAROUND: domain.set_config() is broken in Vitis 2024.1
                         bsp_yaml_path = self.__get_bsp_yaml_path()
                         _edit_bsp_yaml_value(bsp_yaml_path, param_name, param_value)
                         log.debug(f"Successfully set {lib_name} parameter {param_name} = {param_value}")
@@ -228,11 +215,9 @@ class VitisPlatformDomain(object):
 
     def __configure_drivers(self, domain) -> None:
         """Configure driver versions from numbered [driver_N] sections."""
-        # Find all driver sections
         driver_sections = [s for s in self.__config.sections() if re.match(r"driver_\d+", s)]
 
         for section in sorted(driver_sections):
-            # Validate required fields: name and version
             if not self.__config.has_option(section, "name"):
                 log.warning(f"Driver section [{section}] missing required field 'name', skipping")
                 continue
@@ -262,8 +247,11 @@ class VitisPlatformDomain(object):
     def build(self) -> None:
         """Build the domain BSP."""
         log.info(f"Building domain {self.__name}")
-        platform = self.__client.get_component(name=self.__platform_name)
+        platform = self.__client.get_component( # type: ignore
+            name=self.__platform_name
+        )
         domain = platform.get_domain(name=self.__name)
+        log.debug(f"Executing Vitis build in workspace '{self.__workspace_path}': domain.build() for '{self.__name}'")
         status = domain.build()
         log.info(f"Domain {self.__name} build completed with status: {status}")
         return status
@@ -272,7 +260,7 @@ class VitisPlatformDomain(object):
 
 class VitisPlatform(object):
 
-    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str, config: str, workspace_path: str) -> None:
+    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str, config: str, workspace_path: str) -> None: # pyright: ignore[reportInvalidTypeVarUse]
         log.info(f"Defining a Platform Project with name {name}")
         self.__client = client
         self.__name = name
@@ -282,14 +270,12 @@ class VitisPlatform(object):
         self.__workspace_path = workspace_path
         self.__platform = None
         self.__domains: List[VitisPlatformDomain] = []
-        # Add the default domain
         self.__add_domain(
             self.__config.get("domain", "NAME"),
             self.__config.get("domain", "DISPLAY_NAME"),
             self.__config.get("domain", "PROCESSOR_INSTANCE"),
             read_config(self.__config_folder, self.__config.get("domain", "CONFIG")),
         )
-        # Add all additional domains
         additional_domains = [name for name in list(self.__config.sections()) if re.match("domain_\d+", name)]
         for domain in additional_domains:
             self.__add_domain(
@@ -305,16 +291,13 @@ class VitisPlatform(object):
         xsa_path = os.path.join(HDL_DATA_PATH, f"{self.__config.get('flow', 'XSA')}.xsa")
         log.debug(f"Sourcing the platfrom project from XSA file {xsa_path}")
 
-        # Only skip boot BSP creation if explicitly set to false
         has_boot_components = self.__config.getboolean("boot", "BOOT_COMPONENTS", fallback=True)
 
-        # Get the first domain info to pass to platform creation
-        # This ensures the domain is properly exported for applications
         first_domain_name = self.__config.get("domain", "NAME")
-        first_domain_os = self.__domains[0]._VitisPlatformDomain__config.get("domain", "OS")
+        first_domain_os = self.__domains[0]._VitisPlatformDomain__config.get("domain", "OS") # type: ignore
         first_domain_cpu = self.__config.get("domain", "PROCESSOR_INSTANCE")
 
-        self.__platform = self.__client.create_platform_component(
+        self.__platform = self.__client.create_platform_component( # type: ignore
             name = f"{self.__name}_platform",
             hw_design = xsa_path,
             os = first_domain_os,
@@ -357,27 +340,26 @@ class VitisPlatform(object):
     def __create_fsbl(self) -> None:
         has_boot_components = self.__config.getboolean("boot", "BOOT_COMPONENTS")
         if has_boot_components:
-            self.__platform.generate_boot_bsp(target_processor="")
+            self.__platform.generate_boot_bsp( # type: ignore
+                target_processor=""
+            )
         else:
             raise NotImplementedError("Ability to add custom FSBLs not yet supported")
 
 
     def create(self) -> None:
         log.info(f"Attempting to create platform project {self.__name}")
-        # Create the platform from its source
         # Note: create_platform_component() automatically creates the first domain
-        # when os, cpu, and domain_name parameters are provided
+        #       when os, cpu, and domain_name parameters are provided
         self.__source_map(self.__config.get("flow", "SOURCE"))
 
-        # Create additional platform domains (if any)
-        # Skip index 0 since the first domain is already created by create_platform_component()
         for i in range(1, len(self.__domains)):
             self.__domains[i].create()
 
-        # Get the platform component
-        self.__platform = self.__client.get_component(name=f"{self.__name}_platform")
+        self.__platform = self.__client.get_component( # type: ignore
+            name=f"{self.__name}_platform"
+        )
 
-        # Configure all domains (including the first one)
         for domain in self.__domains:
             domain.configure()
 
@@ -385,7 +367,10 @@ class VitisPlatform(object):
     def build(self) -> None:
         """Build the platform and all domains."""
         log.info(f"Building platform {self.__name}")
-        platform = self.__client.get_component(name=f"{self.__name}_platform")
+        platform = self.__client.get_component( # type: ignore
+            name=f"{self.__name}_platform"
+        )
+        log.debug(f"Executing Vitis build in workspace '{self.__workspace_path}': platform.build() for '{self.__name}_platform'")
         status = platform.build()
         log.info(f"Platform {self.__name} build completed with status: {status}")
         return status

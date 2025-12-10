@@ -41,7 +41,6 @@ class BaseLogger(object, metaclass = Singleton):
         logging.addLevelName(TRACE, "TRACE")
         def trace(self, message, *args, **kws):
             if self.isEnabledFor(logging.TRACE):
-                # Yes, logger takes its '*args' as 'args'.
                 self._log(TRACE, message, args, **kws)
         logging.Logger.trace = trace
         logger = logging.getLogger(APP_LOGGER_NAME)

@@ -22,19 +22,19 @@ from vitis_application import VitisApplication
 log = Logger("create")
 
 
-def create_workspace(client: vitis_client) -> None:
-    # Set Vitis Workspace
+def create_workspace(client: vitis_client) -> None: # pyright: ignore[reportInvalidTypeVarUse]
     log.info(f"Attempting to make workspace in {PROJECTS_PATH}")
     Path(os.path.join(parentdir, "Projects")).mkdir(parents=True, exist_ok=True)
-    client.set_workspace(path=PROJECTS_PATH)
+    client.set_workspace( # type: ignore
+        path=PROJECTS_PATH
+    )
 
 
 class ProjectCreator(object):
 
-    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None:
+    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None: # pyright: ignore[reportInvalidTypeVarUse]
         log.info(f"Defining a ProjectCreator with name {args.name}")
         self.__client = client
-        # Read the top configuration information
         self.__config_folder = os.path.join(TOP_PATH, args.name)
         self.__config_top = read_config(self.__config_folder, "vitis")
         self.__platform = None
@@ -43,7 +43,6 @@ class ProjectCreator(object):
 
     def create(self) -> None:
         log.info(f"Beginning Project creation...")
-        # Create the platform
         self.__platform = VitisPlatform(
             self.__client,
             self.__config_top.get('platform', 'NAME'),
@@ -54,22 +53,18 @@ class ProjectCreator(object):
         )
         self.__platform.create()
 
-        # Create & configure the applications
         self.__create_applications()
 
-        # Build the platform
         log.info("Building platform...")
         self.__platform.build()
 
-        # Build all applications
         for app in self.__applications:
-            log.info(f"Building application {app._VitisApplication__name}...")
+            log.info(f"Building application {app._VitisApplication__name}...") # type: ignore
             app.build()
 
 
     def __create_applications(self) -> None:
         """Create all applications defined in the configuration."""
-        # Check for default application section
         if self.__config_top.has_section('application'):
             self.__create_single_application('application')
 
@@ -121,4 +116,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
     project_creator = ProjectCreator(None, args)
     project_creator.create()
-    # create_full_project(None, args)

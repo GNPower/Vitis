@@ -22,7 +22,6 @@ from vitis_paths import (
 
 log = Logger("application")
 
-# Template path
 TEMPLATES_PATH = os.path.join(os.path.dirname(__file__), "templates")
 
 
@@ -42,7 +41,6 @@ def _edit_cmake_variable(file_path: str, variable_name: str, new_value: str) -> 
     # Handles both single line and multi-line values
     pattern = rf'(set\({variable_name}\s+)([^\)]*)\)'
 
-    # Replace the value
     replacement = rf'\g<1>{new_value})'
     new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE | re.DOTALL)
 
@@ -61,8 +59,6 @@ def _parse_multiline_paths(config_value: str) -> List[str]:
     Returns:
         List of cleaned, non-empty path strings
     """
-    # Replace newlines with commas, then split by commas
-    # Strip whitespace from each entry and filter empty strings
     paths = [p.strip() for p in config_value.replace('\n', ',').split(',') if p.strip()]
     return paths
 
@@ -74,8 +70,8 @@ def _expand_path_variables(path: str) -> str:
 
     Supported custom variables:
     - ${VITIS_INSTALL_DIR} -> Vitis installation root
-    - ${PROJECT_DIR} -> Workspace root (src/Projects)
-    - ${PARENT_DIR} -> Source root (src/)
+    - ${PROJECT_DIR} -> Workspace root
+    - ${PARENT_DIR} -> Source root
 
     Args:
         path: Path potentially containing variables
@@ -83,17 +79,12 @@ def _expand_path_variables(path: str) -> str:
     Returns:
         Path with custom variables expanded, forward slashes
     """
-    # Only expand our custom variables, leave CMAKE variables untouched
     expanded = path
 
-    # Check if this is a CMake variable (starts with ${ and contains CMAKE, XILINX, etc.)
-    # If it is, don't expand it - let CMake handle it
     cmake_var_pattern = r'\$\{(CMAKE_|XILINX_)'
     if re.search(cmake_var_pattern, path):
-        # Keep CMake variables literal, but normalize path separators
         return normalize_path(path)
 
-    # Expand custom variables
     if '${VITIS_INSTALL_DIR}' in expanded:
         expanded = expanded.replace('${VITIS_INSTALL_DIR}', get_vitis_install_dir())
 
@@ -103,7 +94,6 @@ def _expand_path_variables(path: str) -> str:
     if '${PARENT_DIR}' in expanded:
         expanded = expanded.replace('${PARENT_DIR}', get_src_root())
 
-    # Normalize to forward slashes
     return normalize_path(expanded)
 
 
@@ -119,17 +109,14 @@ def _create_symlink(src_path: str, link_path: str) -> bool:
         True if symlink/copy created successfully, False otherwise
     """
     try:
-        # Skip if link already exists
         if os.path.exists(link_path) or os.path.islink(link_path):
             log.debug(f"Symlink already exists: {link_path}")
             return True
 
-        # Verify source exists
         if not os.path.exists(src_path):
             log.warning(f"Source file does not exist: {src_path}")
             return False
 
-        # Create symlink based on OS
         if platform.system() == 'Windows':
             try:
                 # On Windows, try creating symlink (requires admin or developer mode)
@@ -142,7 +129,6 @@ def _create_symlink(src_path: str, link_path: str) -> bool:
                 log.info(f"Created copy (symlink failed): {os.path.basename(link_path)} -> {src_path}")
                 return True
         else:
-            # Linux/Unix - create symlink directly
             os.symlink(src_path, link_path)
             log.info(f"Created symlink: {os.path.basename(link_path)} -> {src_path}")
             return True
@@ -173,10 +159,8 @@ def _find_source_files_recursively(folder: str, extensions: List[str] = ['.c', '
         log.warning(f"Path is not a directory: {folder}")
         return source_files
 
-    # Walk directory tree
     for root, dirs, files in os.walk(folder):
         for file in files:
-            # Check if file has one of the target extensions
             if any(file.endswith(ext) for ext in extensions):
                 source_files.append(os.path.join(root, file))
 
@@ -201,15 +185,12 @@ def _create_folder_symlink(src_folder: str, link_name: str, project_src_dir: str
         True if successful, False otherwise
     """
     try:
-        # Destination path in project
         link_path = os.path.join(project_src_dir, link_name)
 
-        # Skip if already exists
         if os.path.exists(link_path) or os.path.islink(link_path):
             log.debug(f"Folder symlink already exists: {link_path}")
             return True
 
-        # Verify source folder exists
         if not os.path.exists(src_folder):
             log.warning(f"Source folder does not exist: {src_folder}")
             return False
@@ -218,39 +199,31 @@ def _create_folder_symlink(src_folder: str, link_name: str, project_src_dir: str
             log.warning(f"Source path is not a directory: {src_folder}")
             return False
 
-        # Try creating folder symlink
         try:
             os.symlink(src_folder, link_path, target_is_directory=True)
             log.info(f"Created folder symlink: {link_name}/ -> {src_folder}")
             return True
 
         except OSError as symlink_error:
-            # Folder symlink failed - fall back to directory recreation
             log.debug(f"Folder symlink failed ({symlink_error}), recreating directory structure")
 
-            # Create base directory
             os.makedirs(link_path, exist_ok=True)
 
-            # Walk source folder tree and recreate structure
             file_count = 0
             for root, dirs, files in os.walk(src_folder):
-                # Calculate relative path from source folder
                 rel_path = os.path.relpath(root, src_folder)
 
-                # Destination directory in project
                 if rel_path == '.':
                     dest_dir = link_path
                 else:
                     dest_dir = os.path.join(link_path, rel_path)
                     os.makedirs(dest_dir, exist_ok=True)
 
-                # Symlink individual source files
                 for file in files:
                     if file.endswith(('.c', '.S')):
                         src_file = os.path.join(root, file)
                         dest_file = os.path.join(dest_dir, file)
 
-                        # Use existing _create_symlink() for individual files
                         if _create_symlink(src_file, dest_file):
                             file_count += 1
 
@@ -281,11 +254,11 @@ def _format_optimization_level(level: str) -> str:
     if level == "none" or not level:
         return ""
     elif level.startswith("-"):
-        return level  # Already formatted
+        return level
     elif level.startswith("o"):
-        return f"-{level.upper()}"  # o1 -> -O1
+        return f"-{level.upper()}"
     else:
-        return f"-O{level}"  # 1 -> -O1
+        return f"-O{level}"
 
 
 def _format_debug_level(level: str) -> str:
@@ -302,11 +275,11 @@ def _format_debug_level(level: str) -> str:
     if level == "none" or not level:
         return ""
     elif level.startswith("-"):
-        return level  # Already formatted
+        return level
     elif level.startswith("g"):
-        return f"-{level}"  # g3 -> -g3
+        return f"-{level}"
     else:
-        return f"-g{level}"  # 3 -> -g3
+        return f"-g{level}"
 
 
 def _render_template(template_path: str, context: Dict[str, Any]) -> str:
@@ -323,10 +296,8 @@ def _render_template(template_path: str, context: Dict[str, Any]) -> str:
     with open(template_path, 'r') as f:
         content = f.read()
 
-    # Replace {{placeholders}}
     for key, value in context.items():
         placeholder = f"{{{{{key}}}}}"
-        # Convert Python bool to JSON bool (lowercase)
         if isinstance(value, bool):
             value = str(value).lower()
         content = content.replace(placeholder, str(value))
@@ -337,7 +308,7 @@ def _render_template(template_path: str, context: Dict[str, Any]) -> str:
 class VitisDebugConfig(object):
     """Represents a single debug/launch configuration."""
 
-    def __init__(self, client: vitis_client, app_name: str, platform_name: str, workspace_path: str,
+    def __init__(self, client: vitis_client, app_name: str, platform_name: str, workspace_path: str, # pyright: ignore[reportInvalidTypeVarUse]
                  name: str, display_name: str, config: configparser.ConfigParser):
         self.__client = client
         self.__app_name = app_name
@@ -356,14 +327,11 @@ class VitisDebugConfig(object):
         """
         log.info(f"Generating launch configuration: {self.__name}")
 
-        # Get config values with defaults
         config_name = self.__config.get("launch", "name", fallback=f"{self.__app_name}_{self.__name}")
         debug_type = self.__config.get("launch", "debug_type", fallback="baremetal-zynq")
         target_core = self.__config.get("target", "core", fallback="ps7_cortexa9_0")
         context = self.__config.get("target", "context", fallback="zynq")
 
-        # Auto-detect paths if not specified
-        # Use forward slashes for JSON compatibility (Windows/VSCode accept them)
         bitstream = self.__config.get("hardware", "bitstream", fallback="")
         if not bitstream:
             # Auto-detect: ${workspace}/${app_name}/_ide/bitstream/*.bit
@@ -385,14 +353,12 @@ class VitisDebugConfig(object):
 
         elf_file = f"${{workspaceFolder}}/{self.__app_name}/build/{self.__app_name}.elf"
 
-        # Behavior settings
         reset_system = self.__config.getboolean("behavior", "reset_system", fallback=True)
         program_device = self.__config.getboolean("behavior", "program_device", fallback=True)
         reset_apu = self.__config.getboolean("behavior", "reset_apu", fallback=False)
         stop_at_entry = self.__config.getboolean("behavior", "stop_at_entry", fallback=False)
         reset_processor = self.__config.getboolean("behavior", "reset_processor", fallback=True)
 
-        # Build context for template
         context = {
             "config_name": config_name,
             "debug_type": debug_type,
@@ -409,11 +375,9 @@ class VitisDebugConfig(object):
             "stop_at_entry": stop_at_entry,
         }
 
-        # Render template
         template_path = os.path.join(TEMPLATES_PATH, "launch.json.template")
         rendered = _render_template(template_path, context)
 
-        # Parse as JSON to get the configuration object
         template_data = json.loads(rendered)
         return template_data["configurations"][0]
 
@@ -421,7 +385,7 @@ class VitisDebugConfig(object):
 class VitisApplication(object):
     """Represents a Vitis application component with compiler, linker, and debug configurations."""
 
-    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str,
+    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str, # pyright: ignore[reportInvalidTypeVarUse]
                  config: str, workspace_path: str):
         log.info(f"Defining an Application Component with name {name}")
         self.__client = client
@@ -433,12 +397,10 @@ class VitisApplication(object):
         self.__application = None
         self.__launch_configs: List[VitisDebugConfig] = []
 
-        # Add all launch configurations
         self.__add_launch_configs()
 
     def __add_launch_configs(self) -> None:
         """Parse and add all launch configurations from config."""
-        # Add the default launch config
         if self.__config.has_section("launch"):
             self.__add_launch_config(
                 self.__config.get("launch", "NAME"),
@@ -477,7 +439,6 @@ class VitisApplication(object):
         domain_name = self.__config.get("application", "DOMAIN")
         template = self.__config.get("application", "TEMPLATE", fallback="")
 
-        # Build platform path
         platform_path = os.path.join(
             self.__workspace_path,
             f"{platform_name}_platform",
@@ -489,9 +450,7 @@ class VitisApplication(object):
         log.debug(f"Using platform: {platform_path}")
         log.debug(f"Targeting domain: {domain_name}")
 
-        # Create application component
         # If template is empty/not specified, create bare application (no template parameter)
-        # If template is specified, pass it to create from template
         if template:
             log.debug(f"Using template: {template}")
             self.__application = self.__client.create_app_component( # type: ignore
@@ -539,7 +498,6 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "compile_definitions"):
             defined = self.__config.get("compiler", "compile_definitions").strip()
             if defined:
-                # Split by comma and format for CMake
                 symbols = [s.strip() for s in defined.split(',')]
                 value = '\n'.join(f'"{s}"' for s in symbols)
                 _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
@@ -555,9 +513,7 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "include_directories"):
             includes = self.__config.get("compiler", "include_directories").strip()
             if includes:
-                # Parse multi-line, comma-separated paths
                 paths = _parse_multiline_paths(includes)
-                # Expand variables in each path
                 expanded_paths = [_expand_path_variables(p) for p in paths]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
                 _edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
@@ -654,12 +610,9 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "source_files"):
             sources = self.__config.get("compiler", "source_files").strip()
             if sources:
-                # Parse multi-line, comma-separated paths
                 source_list = _parse_multiline_paths(sources)
-                # Expand variables in each path
                 expanded_sources = [_expand_path_variables(s) for s in source_list]
 
-                # Create symlinks in project src/ directory for Vitis IDE validation
                 # These will be found by aux_source_directory() automatically
                 project_src_dir = os.path.join(
                     self.__workspace_path,
@@ -670,11 +623,8 @@ class VitisApplication(object):
                 if os.path.exists(project_src_dir):
                     log.debug(f"Creating symlinks in {project_src_dir} for Vitis IDE")
                     for source_file in expanded_sources:
-                        # Extract just the filename
                         filename = os.path.basename(source_file)
-                        # Create symlink path in project src/ directory
                         symlink_path = os.path.join(project_src_dir, filename)
-                        # Create the symlink (or copy on Windows if permissions insufficient)
                         _create_symlink(source_file, symlink_path)
                 else:
                     log.warning(f"Project src directory not found: {project_src_dir}")
@@ -683,12 +633,9 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "source_folders"):
             folders = self.__config.get("compiler", "source_folders").strip()
             if folders:
-                # Parse multi-line, comma-separated paths
                 folder_list = _parse_multiline_paths(folders)
-                # Expand variables in each path
                 expanded_folders = [_expand_path_variables(f) for f in folder_list]
 
-                # Project src/ directory for symlinks
                 project_src_dir = os.path.join(
                     self.__workspace_path,
                     self.__name,
@@ -698,7 +645,6 @@ class VitisApplication(object):
                 if os.path.exists(project_src_dir):
                     log.debug(f"Processing source folders for {project_src_dir}")
                     for folder_path in expanded_folders:
-                        # Validate folder exists
                         if not os.path.exists(folder_path):
                             log.warning(f"Source folder does not exist: {folder_path}")
                             continue
@@ -707,10 +653,8 @@ class VitisApplication(object):
                             log.warning(f"Source folder path is not a directory: {folder_path}")
                             continue
 
-                        # Get folder name for symlink (preserves folder structure)
                         folder_name = os.path.basename(folder_path)
 
-                        # Create folder symlink (with fallback to directory recreation)
                         _create_folder_symlink(folder_path, folder_name, project_src_dir)
                 else:
                     log.warning(f"Project src directory not found: {project_src_dir}")
@@ -721,7 +665,7 @@ class VitisApplication(object):
         """Modify CMakeLists.txt to use recursive source discovery.
 
         Replaces aux_source_directory() with file(GLOB_RECURSE ...) to find
-        source files in subdirectories like drivers/uart/src/.
+        source files in subdirectories.
         """
         log.debug("Configuring CMakeLists.txt for recursive source discovery")
 
@@ -739,7 +683,6 @@ class VitisApplication(object):
         with open(cmake_path, 'r') as f:
             content = f.read()
 
-        # Replace aux_source_directory with GLOB_RECURSE
         old_pattern = r'aux_source_directory\(\$\{CMAKE_SOURCE_DIR\}\s+_sources\)'
         new_code = '''file(GLOB_RECURSE _sources
     FOLLOW_SYMLINKS
@@ -749,7 +692,6 @@ class VitisApplication(object):
 
         new_content = re.sub(old_pattern, new_code, content)
 
-        # Check if replacement was made
         if new_content == content:
             log.debug("CMakeLists.txt already configured or pattern not found")
             return
@@ -806,9 +748,7 @@ class VitisApplication(object):
         if self.__config.has_option("linker", "link_directories"):
             paths = self.__config.get("linker", "link_directories").strip()
             if paths:
-                # Parse multi-line, comma-separated paths
                 path_list = _parse_multiline_paths(paths)
-                # Expand variables in each path
                 expanded_paths = [_expand_path_variables(p) for p in path_list]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
                 _edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
@@ -817,10 +757,8 @@ class VitisApplication(object):
         if self.__config.has_option("linker", "linker_script"):
             script = self.__config.get("linker", "linker_script").strip()
             if script:
-                # Expand variables in linker script path
                 expanded_script = _expand_path_variables(script)
 
-                # Create symlink in project src/ directory (consistent with source file behavior)
                 project_src_dir = os.path.join(
                     self.__workspace_path,
                     self.__name,
@@ -828,10 +766,8 @@ class VitisApplication(object):
                 )
 
                 if os.path.exists(project_src_dir):
-                    # Create symlink for linker script as lscript.ld
                     linker_script_symlink = os.path.join(project_src_dir, "lscript.ld")
 
-                    # Remove existing file/symlink if it exists to ensure fresh symlink
                     if os.path.exists(linker_script_symlink) or os.path.islink(linker_script_symlink):
                         try:
                             os.remove(linker_script_symlink)
@@ -839,17 +775,13 @@ class VitisApplication(object):
                         except Exception as e:
                             log.warning(f"Failed to remove existing linker script: {e}")
 
-                    # Create the symlink (or copy on Windows if permissions insufficient)
                     if _create_symlink(expanded_script, linker_script_symlink):
-                        # Use CMAKE_SOURCE_DIR relative path (points to symlink in project)
                         _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT",
                                            '"${CMAKE_SOURCE_DIR}/lscript.ld"')
                     else:
-                        # Fallback to absolute path if symlink creation failed
                         log.warning(f"Failed to create linker script symlink, using absolute path")
                         _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
                 else:
-                    # Project src directory doesn't exist, use absolute path
                     log.warning(f"Project src directory not found: {project_src_dir}, using absolute path for linker script")
                     _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
 
@@ -872,10 +804,8 @@ class VitisApplication(object):
             "launch.json"
         )
 
-        # Ensure directory exists
         os.makedirs(os.path.dirname(launch_json_path), exist_ok=True)
 
-        # Load existing launch.json or create new
         if os.path.exists(launch_json_path):
             with open(launch_json_path, 'r') as f:
                 launch_data = json.load(f)
@@ -885,19 +815,16 @@ class VitisApplication(object):
                 "configurations": []
             }
 
-        # Generate configurations from all launch configs
         for launch_config in self.__launch_configs:
             new_config = launch_config.generate_launch_config()
             config_name = new_config["name"]
 
-            # Check if configuration already exists
             existing_idx = None
             for idx, config in enumerate(launch_data["configurations"]):
                 if config["name"] == config_name:
                     existing_idx = idx
                     break
 
-            # Update existing or append new
             if existing_idx is not None:
                 log.debug(f"Updating existing launch configuration: {config_name}")
                 launch_data["configurations"][existing_idx] = new_config
@@ -905,7 +832,6 @@ class VitisApplication(object):
                 log.debug(f"Adding new launch configuration: {config_name}")
                 launch_data["configurations"].append(new_config)
 
-        # Write back to file
         with open(launch_json_path, 'w') as f:
             json.dump(launch_data, f, indent=2)
 
@@ -919,10 +845,8 @@ class VitisApplication(object):
         """
         log.debug("Creating/updating common .clangd configuration")
 
-        # Collect all source paths from configuration
         source_paths = []
 
-        # Add source folders from config
         if self.__config.has_option("compiler", "source_folders"):
             folders = self.__config.get("compiler", "source_folders").strip()
             if folders:
@@ -930,7 +854,6 @@ class VitisApplication(object):
                 expanded_folders = [_expand_path_variables(f) for f in folder_list]
                 source_paths.extend(expanded_folders)
 
-        # Add source files directories from config
         if self.__config.has_option("compiler", "source_files"):
             sources = self.__config.get("compiler", "source_files").strip()
             if sources:
@@ -938,7 +861,6 @@ class VitisApplication(object):
                 expanded_sources = [_expand_path_variables(s) for s in source_list]
                 source_paths.extend([os.path.dirname(f) for f in expanded_sources])
 
-        # Add project directory
         project_dir = os.path.join(self.__workspace_path, self.__name)
         source_paths.append(project_dir)
 
@@ -946,11 +868,9 @@ class VitisApplication(object):
             log.warning("No source paths found, cannot determine common parent")
             return
 
-        # Find common parent of all source paths
         common_parent = os.path.commonpath(source_paths)
         log.info(f"Common parent for source files: {common_parent}")
 
-        # Create/update .clangd at common parent
         clangd_path = os.path.join(common_parent, ".clangd")
         clangd_content = """CompileFlags:
     Add: [-Wno-unknown-warning-option, -U__linux__, -U__clang__]
@@ -965,7 +885,6 @@ class VitisApplication(object):
             log.warning(f"Failed to create .clangd at {clangd_path}: {e}")
             return
 
-        # Create/update symlink to compile_commands.json at common parent
         compile_db_dest = os.path.join(common_parent, "compile_commands.json")
         compile_db_src = os.path.join(project_dir, "compile_commands.json")
 
@@ -973,7 +892,6 @@ class VitisApplication(object):
             log.warning(f"compile_commands.json not found at {compile_db_src}")
             return
 
-        # Remove old symlink/file if exists
         if os.path.exists(compile_db_dest) or os.path.islink(compile_db_dest):
             try:
                 os.remove(compile_db_dest)
@@ -981,7 +899,6 @@ class VitisApplication(object):
             except Exception as e:
                 log.warning(f"Failed to remove old compile_commands.json: {e}")
 
-        # Try to create symlink, fallback to copy if not supported
         try:
             rel_path = os.path.relpath(compile_db_src, common_parent)
             os.symlink(rel_path, compile_db_dest)
@@ -998,11 +915,13 @@ class VitisApplication(object):
     def build(self) -> None:
         """Build the application component."""
         log.info(f"Building application {self.__name}")
-        app = self.__client.get_component(name=self.__name)
+        app = self.__client.get_component( # type: ignore
+            name=self.__name
+        )
+        log.debug(f"Executing Vitis build in workspace '{self.__workspace_path}': application.build() for '{self.__name}'")
         status = app.build()
         log.info(f"Application {self.__name} build completed with status: {status}")
 
-        # Create/update common .clangd and compilation database after build
         self.__create_common_clangd()
 
         return status

@@ -18,5 +18,6 @@ from Vitis.vitis_paths import parentdir, PROJECTS_PATH, HDL_DATA_PATH
 log = Logger("project")
 
 
-def create_project(client: vitis_client, project_name: str) -> None:
+def create_project(client: vitis_client, project_name: str) -> None: # pyright: ignore[reportInvalidTypeVarUse]
+    # TODO: this
     pass

@@ -7,12 +7,10 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-# Get the script directories
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
 
-# Create relevent path variables
 PROJECTS_PATH = os.path.join(parentdir, "Projects")
 TOP_PATH = os.path.join(parentdir, "Top")
 HDL_DATA_PATH = os.path.join(os.path.dirname(parentdir), "hdl", "data")
@@ -43,11 +41,9 @@ def get_vitis_root() -> Tuple[str, str]:
     """
     global _VITIS_ROOT, _VITIS_VERSION
     
-    # Return cached values if available
     if _VITIS_ROOT and _VITIS_VERSION:
         return _VITIS_ROOT, _VITIS_VERSION
     
-    # Detect platform and use appropriate command
     system = platform.system()
     if system == "Windows":
         cmd = ["where", "vitis"]
@@ -60,17 +56,12 @@ def get_vitis_root() -> Tuple[str, str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         raise RuntimeError("Vitis CLI not found. Ensure Vitis is installed and in PATH.")
     
-    # Parse path to extract root
     # Expected: .../Xilinx/<version>/bin/vitis or .../Xilinx/Vitis/<version>/bin/vitis
     path_parts = Path(vitis_cli_path).parts
 
-    # Find Xilinx in path and get version
     try:
         xilinx_idx = next(i for i, part in enumerate(path_parts) if part.lower() == "xilinx")
 
-        # Handle both path structures:
-        # 1. /Xilinx/2024.1/...
-        # 2. /Xilinx/Vitis/2024.1/...
         next_part = path_parts[xilinx_idx + 1]
         if next_part.lower() == "vitis":
             # Structure: /Xilinx/Vitis/2024.1/...
@@ -83,7 +74,6 @@ def get_vitis_root() -> Tuple[str, str]:
     except (StopIteration, IndexError):
         raise RuntimeError(f"Could not parse Vitis root from path: {vitis_cli_path}")
 
-    # Validate version >= 2024.1
     try:
         year, minor = version.split('.')[:2]
         if int(year) < 2024 or (int(year) == 2024 and int(minor) < 1):
@@ -91,7 +81,6 @@ def get_vitis_root() -> Tuple[str, str]:
     except ValueError:
         raise RuntimeError(f"Could not parse Vitis version: {version}")
     
-    # Cache the results
     _VITIS_ROOT = vitis_root
     _VITIS_VERSION = version
     
@@ -111,7 +100,6 @@ def get_library_path(lib_name: str, lib_version: str) -> str:
     """
     vitis_root, _ = get_vitis_root()
     
-    # Check sw_services first (for openamp, etc.)
     sw_services_path = os.path.join(
         vitis_root, "data", "embeddedsw", "ThirdParty", "sw_services",
         f"{lib_name}_{lib_version}"
@@ -119,7 +107,6 @@ def get_library_path(lib_name: str, lib_version: str) -> str:
     if os.path.exists(sw_services_path):
         return sw_services_path
     
-    # Check lib/sw_services next (for xilflash, etc.)
     lib_services_path = os.path.join(
         vitis_root, "data", "embeddedsw", "lib", "sw_services",
         f"{lib_name}_{lib_version}"
@@ -127,7 +114,6 @@ def get_library_path(lib_name: str, lib_version: str) -> str:
     if os.path.exists(lib_services_path):
         return lib_services_path
     
-    # Check lib/bsp for BSP libraries
     bsp_path = os.path.join(
         vitis_root, "data", "embeddedsw", "lib", "bsp",
         f"{lib_name}_{lib_version}"
@@ -192,7 +178,7 @@ def get_vitis_install_dir() -> str:
 
 def get_workspace_root() -> str:
     """
-    Get workspace root directory (src/Projects) with forward slashes.
+    Get workspace root directory (Projects/) with forward slashes.
 
     Returns:
         str: Workspace root path
@@ -202,7 +188,7 @@ def get_workspace_root() -> str:
 
 def get_src_root() -> str:
     """
-    Get source root directory (src/) with forward slashes.
+    Get source root directory with forward slashes.
 
     Returns:
         str: Source root path
