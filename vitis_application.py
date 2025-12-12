@@ -250,12 +250,26 @@ def _format_optimization_level(level: str) -> str:
     Returns:
         Compiler flag (-O0, -O1, -O2, -O3, -Os) or empty string for none
     """
-    level = level.strip().lower()
-    if level == "none" or not level:
+    level = level.strip()
+    level_lower = level.lower()
+
+    if level_lower == "none" or not level:
         return ""
     elif level.startswith("-"):
-        return level
-    elif level.startswith("o"):
+        # If user provided dash, extract the part after it and normalize
+        level_part = level[1:]
+        level_lower_part = level_part.lower()
+        if level_lower_part == "none" or not level_part:
+            return ""
+        elif level_lower_part == "os":
+            return "-Os"
+        elif level_lower_part.startswith("o"):
+            return f"-{level_part.upper()}"
+        else:
+            return f"-O{level_part}"
+    elif level_lower == "os":
+        return "-Os"
+    elif level_lower.startswith("o"):
         return f"-{level.upper()}"
     else:
         return f"-O{level}"
