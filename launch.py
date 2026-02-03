@@ -10,6 +10,7 @@ vitis_client = TypeVar('vitis_client')
 from vitis_logging import *
 from vitis_create import create_workspace, ProjectCreator
 from vitis_build import activate_project, build_project_ninja, build_project_vitis, build_project_all, build_project_all_ninja
+from vitis_update import ProjectUpdater
 
 
 def project_creator_wrapper(client: vitis_client, args: argparse.Namespace) -> None: # pyright: ignore[reportInvalidTypeVarUse]
@@ -81,6 +82,12 @@ def build_project_wrapper(args: argparse.Namespace, client: vitis_client = None)
         sys.exit(exit_code)
 
 
+def update_project_wrapper(client: vitis_client, args: argparse.Namespace) -> None:  # pyright: ignore[reportInvalidTypeVarUse]
+    """Wrapper for UPDATE command."""
+    updater = ProjectUpdater(client, args)
+    updater.update()
+
+
 def launch_client():
     parser = argparse.ArgumentParser(
         prog="Vitis Workspace Builder"
@@ -121,6 +128,14 @@ def launch_client():
     build.add_argument("--no-activate", dest="activate", action="store_false", default=True,
                        help="Don't activate the project after building")
     build.set_defaults(func=build_project_wrapper, needs_client=True)
+
+    # UPDATE command
+    update = subparser.add_parser("UPDATE", help="Updates an existing project based on config file changes")
+    update.add_argument("name", type=str, help="Name of the project to update")
+    update.add_argument("--platform", action="store_true", help="Update platform/domains only")
+    update.add_argument("--application", action="store_true", help="Update application(s) only")
+    update.add_argument("--no-build", action="store_true", dest="no_build", help="Skip rebuild after updating")
+    update.set_defaults(func=update_project_wrapper, needs_client=True)
 
     args = parser.parse_args()
 
