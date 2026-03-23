@@ -241,22 +241,24 @@ class ApplicationUpdater:
         log.info(f"Application {self.__name} update complete")
 
     def __update_source_files(self) -> None:
-        """Update individual source file symlinks."""
-        if not self.__config.has_option("compiler", "source_files"):
-            return
+        """Update individual source file symlinks.
 
-        sources = self.__config.get("compiler", "source_files").strip()
-        if not sources:
-            return
-
-        source_list = _parse_multiline_paths(sources)
-        expanded_sources = [_expand_path_variables(s) for s in source_list]
+        Always scans for existing file symlinks and removes stale ones,
+        even if source_files is not configured (empty desired set).
+        """
+        # Build desired file set (may be empty if source_files not configured)
+        desired_files = {}
+        if self.__config.has_option("compiler", "source_files"):
+            sources = self.__config.get("compiler", "source_files").strip()
+            if sources:
+                source_list = _parse_multiline_paths(sources)
+                expanded_sources = [_expand_path_variables(s) for s in source_list]
+                desired_files = {os.path.basename(s): s for s in expanded_sources}
 
         # Get current symlinks for source files
         current_file_symlinks = self.__get_current_file_symlinks()
-        desired_files = {os.path.basename(s): s for s in expanded_sources}
 
-        # Remove stale file symlinks
+        # Remove stale file symlinks (files not in desired set)
         for link_name in list(current_file_symlinks.keys()):
             if link_name not in desired_files:
                 link_path = os.path.join(self.__project_src_dir, link_name)
@@ -270,25 +272,27 @@ class ApplicationUpdater:
                 _create_symlink(source_path, symlink_path)
 
     def __update_source_folders(self) -> None:
-        """Update source folder symlinks."""
-        if not self.__config.has_option("compiler", "source_folders"):
-            return
+        """Update source folder symlinks.
 
-        folders = self.__config.get("compiler", "source_folders").strip()
-        if not folders:
-            return
-
-        folder_list = _parse_multiline_paths(folders)
-        expanded_folders = [_expand_path_variables(f) for f in folder_list]
+        Always scans for existing folder symlinks and removes stale ones,
+        even if source_folders is not configured (empty desired set).
+        """
+        # Build desired folder set (may be empty if source_folders not configured)
+        desired_folders = {}
+        if self.__config.has_option("compiler", "source_folders"):
+            folders = self.__config.get("compiler", "source_folders").strip()
+            if folders:
+                folder_list = _parse_multiline_paths(folders)
+                expanded_folders = [_expand_path_variables(f) for f in folder_list]
+                desired_folders = {os.path.basename(f): f for f in expanded_folders}
 
         # Get current folder symlinks
         current_folder_symlinks = self.__get_current_folder_symlinks()
-        desired_folders = {os.path.basename(f): f for f in expanded_folders}
 
         log.debug(f"Current folder symlinks: {list(current_folder_symlinks.keys())}")
         log.debug(f"Desired folder symlinks: {list(desired_folders.keys())}")
 
-        # Remove stale folder symlinks
+        # Remove stale folder symlinks (folders not in desired set)
         for link_name in list(current_folder_symlinks.keys()):
             if link_name not in desired_folders:
                 link_path = os.path.join(self.__project_src_dir, link_name)
