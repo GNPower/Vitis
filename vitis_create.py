@@ -1,17 +1,11 @@
 import argparse
-import configparser
-from functools import partial
-import inspect
 import os
 from pathlib import Path
 import re
-import shutil
-import sys
-from typing import List, TypeVar
+from typing import Any, List, Optional
 
 # Add package: Vitis Python CLI
 # import vitis # type: ignore
-vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import Logger
 from vitis_paths import read_config, parentdir, PROJECTS_PATH, TOP_PATH
@@ -19,10 +13,12 @@ from vitis_platform import VitisPlatform
 from vitis_application import VitisApplication
 
 
+vitis_client = Any
+
 log = Logger("create")
 
 
-def create_workspace(client: vitis_client) -> None: # pyright: ignore[reportInvalidTypeVarUse]
+def create_workspace(client: vitis_client) -> None:
     log.info(f"Attempting to make workspace in {PROJECTS_PATH}")
     Path(os.path.join(parentdir, "Projects")).mkdir(parents=True, exist_ok=True)
     client.set_workspace( # type: ignore
@@ -32,17 +28,17 @@ def create_workspace(client: vitis_client) -> None: # pyright: ignore[reportInva
 
 class ProjectCreator(object):
 
-    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None: # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None:
         log.info(f"Defining a ProjectCreator with name {args.name}")
         self.__client = client
         self.__config_folder = os.path.join(TOP_PATH, args.name)
         self.__config_top = read_config(self.__config_folder, "vitis")
-        self.__platform = None
-        self.__applications: List[VitisApplication] = []       
+        self.__platform: Optional[VitisPlatform] = None
+        self.__applications: List[VitisApplication] = []
 
 
     def create(self) -> None:
-        log.info(f"Beginning Project creation...")
+        log.info("Beginning Project creation...")
         self.__platform = VitisPlatform(
             self.__client,
             self.__config_top.get('platform', 'NAME'),
@@ -59,7 +55,7 @@ class ProjectCreator(object):
         self.__platform.build()
 
         for app in self.__applications:
-            log.info(f"Building application {app._VitisApplication__name}...") # type: ignore
+            log.info(f"Building application {app.name}...")
             app.build()
 
 
@@ -106,7 +102,7 @@ class ProjectCreator(object):
         application.configure()
 
         self.__applications.append(application)
-        
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

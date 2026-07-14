@@ -1,2 +1,10 @@
 __pycache__/**
 .wsdata/**
+
+# Generated logs
+logs/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/

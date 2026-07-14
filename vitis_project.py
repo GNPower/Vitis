@@ -1,23 +1,23 @@
-import argparse
-from functools import partial
-import inspect
-import os
-from pathlib import Path
-import shutil
-import sys
-from typing import TypeVar
+"""
+Placeholder for standalone project scaffolding.
 
-# Add package: Vitis Python CLI
-import vitis # type: ignore
-vitis_client = TypeVar('vitis_client')
+A future entry point will create a bare project skeleton independently of the
+full CREATE flow implemented in ``vitis_create``. It is not wired into ``Do``
+yet.
+"""
+
+from typing import Any
 
 from vitis_logging import Logger
-from Vitis.vitis_paths import parentdir, PROJECTS_PATH, HDL_DATA_PATH
 
+vitis_client = Any
 
 log = Logger("project")
 
 
-def create_project(client: vitis_client, project_name: str) -> None: # pyright: ignore[reportInvalidTypeVarUse]
-    # TODO: this
-    pass
+def create_project(client: vitis_client, project_name: str) -> None:
+    """Create a bare project scaffold. Not implemented yet (see ROADMAP.md)."""
+    raise NotImplementedError(
+        "create_project() is not implemented yet. Use 'Do CREATE <name>' for the full "
+        "project-creation flow. Standalone scaffolding is tracked in ROADMAP.md."
+    )

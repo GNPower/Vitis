@@ -1,13 +1,10 @@
 import logging
-import logging.config
-import sys
 import os
-import json
-from datetime import datetime
-from pathlib import Path
+import sys
 import traceback
+from pathlib import Path
 
-from vitis_paths import currentdir, LOG_PATH
+from vitis_paths import LOG_PATH
 
 
 APP_LOGGER_NAME = 'Vitis Workspace Builder'
@@ -27,7 +24,7 @@ LOG_LEVEL = DEBUG
 
 
 class Singleton(type):
-    _instances = {}
+    _instances: dict = {}
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
             cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
@@ -37,23 +34,25 @@ class Singleton(type):
 class BaseLogger(object, metaclass = Singleton):
 
     def __init__(self) -> None:
-        logging.TRACE = TRACE
+        logging.TRACE = TRACE  # type: ignore[attr-defined]
         logging.addLevelName(TRACE, "TRACE")
+
         def trace(self, message, *args, **kws):
-            if self.isEnabledFor(logging.TRACE):
+            if self.isEnabledFor(logging.TRACE):  # type: ignore[attr-defined]
                 self._log(TRACE, message, args, **kws)
-        logging.Logger.trace = trace
+
+        logging.Logger.trace = trace  # type: ignore[attr-defined]
         logger = logging.getLogger(APP_LOGGER_NAME)
 
         latest_path = os.path.join(LOG_PATH, APP_LOGGER_FILE)
         Path(LOG_PATH).mkdir(parents=True, exist_ok=True)
 
         simple_fmt = logging.Formatter(
-            fmt="[%(asctime)s] %(levelname)s - %(name)s | %(message)s", 
+            fmt="[%(asctime)s] %(levelname)s - %(name)s | %(message)s",
             datefmt="%H:%M:%S"
         )
         verbose_fmt = logging.Formatter(
-            fmt="[%(asctime)s] %(levelname)s - %(name)s - %(threadName)s - %(funcName)s:%(lineno)d | %(message)s", 
+            fmt="[%(asctime)s] %(levelname)s - %(name)s - %(threadName)s - %(funcName)s:%(lineno)d | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
 
@@ -70,9 +69,12 @@ class BaseLogger(object, metaclass = Singleton):
 
     def get_logger(self, module_name):
         logger = logging.getLogger(APP_LOGGER_NAME).getChild(module_name)
-        logger.addHandler(self._console)
-        logger.addHandler(self._file)
-        logger.setLevel(LOG_LEVEL)
+        # Loggers are cached by name, so only attach handlers the first time a
+        # given module logger is requested.
+        if not logger.handlers:
+            logger.addHandler(self._console)
+            logger.addHandler(self._file)
+            logger.setLevel(LOG_LEVEL)
         return logger
 
 
@@ -132,7 +134,7 @@ class Logger(object):
 
 def cleanupLatestLog():
     latest_path = os.path.join(LOG_PATH, APP_LOGGER_FILE)
-    latest_path = latest_path.replace("/", "\\")
+    Path(LOG_PATH).mkdir(parents=True, exist_ok=True)
     open(latest_path, 'w').close()
 
 

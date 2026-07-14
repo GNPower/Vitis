@@ -10,19 +10,20 @@ import configparser
 import os
 import re
 import shutil
-from typing import List, TypeVar
+from typing import Any
 
-vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import Logger
 from vitis_paths import read_config, PROJECTS_PATH, TOP_PATH
 from vitis_platform import VitisPlatformDomain
-from vitis_application import (
-    _parse_multiline_paths, _expand_path_variables, _create_symlink,
-    _create_folder_symlink, _edit_cmake_variable, _format_optimization_level,
-    _format_debug_level, _bool_to_cmake_flag
+from vitis_cmake import (
+    parse_multiline_paths, expand_path_variables, create_symlink,
+    create_folder_symlink, edit_cmake_variable, format_optimization_level,
+    format_debug_level, bool_to_cmake_flag
 )
 
+
+vitis_client = Any
 
 log = Logger("update")
 
@@ -30,7 +31,7 @@ log = Logger("update")
 class ProjectUpdater:
     """Updates an existing Vitis project based on configuration file changes."""
 
-    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None:  # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, args: argparse.Namespace) -> None:
         log.info(f"Initializing ProjectUpdater for {args.name}")
         self.__client = client
         self.__project_name = args.name
@@ -215,7 +216,7 @@ class ProjectUpdater:
 class ApplicationUpdater:
     """Updates an existing Vitis application based on configuration changes."""
 
-    def __init__(self, client: vitis_client, name: str, config_folder: str,  # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, name: str, config_folder: str,
                  config: str, workspace_path: str) -> None:
         self.__client = client
         self.__name = name
@@ -251,8 +252,8 @@ class ApplicationUpdater:
         if self.__config.has_option("compiler", "source_files"):
             sources = self.__config.get("compiler", "source_files").strip()
             if sources:
-                source_list = _parse_multiline_paths(sources)
-                expanded_sources = [_expand_path_variables(s) for s in source_list]
+                source_list = parse_multiline_paths(sources)
+                expanded_sources = [expand_path_variables(s) for s in source_list]
                 desired_files = {os.path.basename(s): s for s in expanded_sources}
 
         # Get current symlinks for source files
@@ -269,7 +270,7 @@ class ApplicationUpdater:
             symlink_path = os.path.join(self.__project_src_dir, filename)
             if not os.path.exists(symlink_path) and not os.path.islink(symlink_path):
                 log.info(f"Adding source file: {filename}")
-                _create_symlink(source_path, symlink_path)
+                create_symlink(source_path, symlink_path)
 
     def __update_source_folders(self) -> None:
         """Update source folder symlinks.
@@ -282,8 +283,8 @@ class ApplicationUpdater:
         if self.__config.has_option("compiler", "source_folders"):
             folders = self.__config.get("compiler", "source_folders").strip()
             if folders:
-                folder_list = _parse_multiline_paths(folders)
-                expanded_folders = [_expand_path_variables(f) for f in folder_list]
+                folder_list = parse_multiline_paths(folders)
+                expanded_folders = [expand_path_variables(f) for f in folder_list]
                 desired_folders = {os.path.basename(f): f for f in expanded_folders}
 
         # Get current folder symlinks
@@ -302,11 +303,11 @@ class ApplicationUpdater:
         for folder_name, folder_path in desired_folders.items():
             if folder_name not in current_folder_symlinks:
                 log.info(f"Adding source folder: {folder_name}")
-                _create_folder_symlink(folder_path, folder_name, self.__project_src_dir)
+                create_folder_symlink(folder_path, folder_name, self.__project_src_dir)
 
     def __get_current_file_symlinks(self) -> dict:
         """Get current file symlinks in project src directory."""
-        symlinks = {}
+        symlinks: dict = {}
         if not os.path.exists(self.__project_src_dir):
             return symlinks
 
@@ -325,7 +326,7 @@ class ApplicationUpdater:
 
     def __get_current_folder_symlinks(self) -> dict:
         """Get current folder symlinks in project src directory."""
-        symlinks = {}
+        symlinks: dict = {}
         if not os.path.exists(self.__project_src_dir):
             return symlinks
 
@@ -378,10 +379,10 @@ class ApplicationUpdater:
         if self.__config.has_option("compiler", "include_directories"):
             includes = self.__config.get("compiler", "include_directories").strip()
             if includes:
-                paths = _parse_multiline_paths(includes)
-                expanded_paths = [_expand_path_variables(p) for p in paths]
+                paths = parse_multiline_paths(includes)
+                expanded_paths = [expand_path_variables(p) for p in paths]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                _edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
                 log.info("Updated include directories")
 
         # Update compile definitions
@@ -390,11 +391,11 @@ class ApplicationUpdater:
             if defined:
                 symbols = [s.strip() for s in defined.split(',')]
                 value = '\n'.join(f'"{s}"' for s in symbols)
-                _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
                 log.info("Updated compile definitions")
             else:
                 # Clear compile definitions if empty
-                _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", "")
+                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", "")
 
         # Update undefined symbols
         if self.__config.has_option("compiler", "undefined_symbols"):
@@ -402,52 +403,52 @@ class ApplicationUpdater:
             if undefined:
                 symbols = [s.strip() for s in undefined.split(',')]
                 value = '\n'.join(f'"{s}"' for s in symbols)
-                _edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
                 log.info("Updated undefined symbols")
 
         # Update optimization level
         if self.__config.has_option("compiler", "optimization_level"):
             level = self.__config.get("compiler", "optimization_level")
-            formatted = _format_optimization_level(level)
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted)
+            formatted = format_optimization_level(level)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted)
 
         # Update debug level
         if self.__config.has_option("compiler", "debug_level"):
             level = self.__config.get("compiler", "debug_level")
-            formatted = _format_debug_level(level)
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted)
+            formatted = format_debug_level(level)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted)
 
         # Update warning flags
         if self.__config.has_option("compiler", "warnings_all"):
             enabled = self.__config.getboolean("compiler", "warnings_all")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
-                                _bool_to_cmake_flag(enabled, "-Wall"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
+                                bool_to_cmake_flag(enabled, "-Wall"))
 
         if self.__config.has_option("compiler", "warnings_extra"):
             enabled = self.__config.getboolean("compiler", "warnings_extra")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
-                                _bool_to_cmake_flag(enabled, "-Wextra"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
+                                bool_to_cmake_flag(enabled, "-Wextra"))
 
         if self.__config.has_option("compiler", "warnings_as_errors"):
             enabled = self.__config.getboolean("compiler", "warnings_as_errors")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
-                                _bool_to_cmake_flag(enabled, "-Werror"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
+                                bool_to_cmake_flag(enabled, "-Werror"))
 
         # Update linker settings
         if self.__config.has_option("linker", "libraries"):
             libs = self.__config.get("linker", "libraries").strip()
             if libs:
-                lib_list = [l.strip() for l in libs.split(',')]
-                value = '\n'.join(f'"{l}"' for l in lib_list)
-                _edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
+                lib_list = [lib.strip() for lib in libs.split(',')]
+                value = '\n'.join(f'"{lib}"' for lib in lib_list)
+                edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
 
         if self.__config.has_option("linker", "link_directories"):
-            paths = self.__config.get("linker", "link_directories").strip()
-            if paths:
-                path_list = _parse_multiline_paths(paths)
-                expanded_paths = [_expand_path_variables(p) for p in path_list]
+            link_dirs = self.__config.get("linker", "link_directories").strip()
+            if link_dirs:
+                path_list = parse_multiline_paths(link_dirs)
+                expanded_paths = [expand_path_variables(p) for p in path_list]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                _edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
 
         log.info("UserConfig.cmake updated")
 
@@ -460,7 +461,7 @@ class ApplicationUpdater:
         if not script:
             return
 
-        expanded = _expand_path_variables(script)
+        expanded = expand_path_variables(script)
         linker_symlink = os.path.join(self.__project_src_dir, "lscript.ld")
 
         # Remove existing symlink/file
@@ -472,5 +473,5 @@ class ApplicationUpdater:
                 return
 
         # Create new symlink
-        _create_symlink(expanded, linker_symlink)
-        log.info(f"Updated linker script symlink")
+        create_symlink(expanded, linker_symlink)
+        log.info("Updated linker script symlink")

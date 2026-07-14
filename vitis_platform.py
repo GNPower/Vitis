@@ -1,21 +1,16 @@
-import argparse
 import configparser
-from functools import partial
-import inspect
 import os
-from pathlib import Path
 import re
-import shutil
-import sys
-from typing import List, TypeVar
+from typing import Any, List
 
 # Add package: Vitis Python CLI
 # import vitis # type: ignore
-vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import Logger
-from vitis_paths import read_config, parentdir, PROJECTS_PATH, HDL_DATA_PATH, get_library_path, get_driver_path
+from vitis_paths import read_config, HDL_DATA_PATH, get_library_path, get_driver_path
 
+
+vitis_client = Any
 
 log = Logger("platform")
 
@@ -62,7 +57,9 @@ def _edit_bsp_yaml_value(bsp_yaml_path: str, param_name: str, new_value: str) ->
 
 class VitisPlatformDomain(object):
 
-    def __init__(self, client: vitis_client, platform_name: str, name: str, display_name: str, processor_instance: str, config: configparser.ConfigParser, workspace_path: str): # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, platform_name: str, name: str,
+                 display_name: str, processor_instance: str,
+                 config: configparser.ConfigParser, workspace_path: str):
         self.__client = client
         self.__platform_name = platform_name
         self.__name = name
@@ -70,6 +67,11 @@ class VitisPlatformDomain(object):
         self.__processor_instance = processor_instance
         self.__config = config
         self.__workspace_path = workspace_path
+
+    @property
+    def os_name(self) -> str:
+        """OS configured for this domain (e.g. 'standalone', 'freertos')."""
+        return self.__config.get("domain", "OS")
 
     def __get_bsp_yaml_path(self) -> str:
         """Get the path to the bsp.yaml file for this domain."""
@@ -81,16 +83,16 @@ class VitisPlatformDomain(object):
             "bsp",
             "bsp.yaml"
         )
-    
+
 
     def create(self) -> None:
         platform = self.__client.get_component( # type: ignore
             name=self.__platform_name
         )
-        status = platform.add_domain(
-            cpu = self.__processor_instance, 
-            os = self.__config.get("domain", "OS"), 
-            name = self.__name, 
+        platform.add_domain(
+            cpu = self.__processor_instance,
+            os = self.__config.get("domain", "OS"),
+            name = self.__name,
             display_name = self.__display_name,
         )
 
@@ -260,7 +262,8 @@ class VitisPlatformDomain(object):
 
 class VitisPlatform(object):
 
-    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str, config: str, workspace_path: str) -> None: # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, name: str, description: str,
+                 config_folder: str, config: str, workspace_path: str) -> None:
         log.info(f"Defining a Platform Project with name {name}")
         self.__client = client
         self.__name = name
@@ -276,7 +279,7 @@ class VitisPlatform(object):
             self.__config.get("domain", "PROCESSOR_INSTANCE"),
             read_config(self.__config_folder, self.__config.get("domain", "CONFIG")),
         )
-        additional_domains = [name for name in list(self.__config.sections()) if re.match("domain_\d+", name)]
+        additional_domains = [name for name in list(self.__config.sections()) if re.match(r"domain_\d+", name)]
         for domain in additional_domains:
             self.__add_domain(
                 self.__config.get(domain, "NAME"),
@@ -289,12 +292,12 @@ class VitisPlatform(object):
 
     def __source_xsa(self) -> None:
         xsa_path = os.path.join(HDL_DATA_PATH, f"{self.__config.get('flow', 'XSA')}.xsa")
-        log.debug(f"Sourcing the platfrom project from XSA file {xsa_path}")
+        log.debug(f"Sourcing the platform project from XSA file {xsa_path}")
 
         has_boot_components = self.__config.getboolean("boot", "BOOT_COMPONENTS", fallback=True)
 
         first_domain_name = self.__config.get("domain", "NAME")
-        first_domain_os = self.__domains[0]._VitisPlatformDomain__config.get("domain", "OS") # type: ignore
+        first_domain_os = self.__domains[0].os_name
         first_domain_cpu = self.__config.get("domain", "PROCESSOR_INSTANCE")
 
         self.__platform = self.__client.create_platform_component( # type: ignore
@@ -312,7 +315,7 @@ class VitisPlatform(object):
 
 
     def __source_platform(self):
-        raise NotImplementedError("Creating a platform project from an existing platform project no yet supported")
+        raise NotImplementedError("Creating a platform project from an existing platform project not yet supported")
 
 
     def __source_map(self, source: str) -> None:
@@ -323,8 +326,9 @@ class VitisPlatform(object):
         }
         source_map[source]()
 
-    
-    def __add_domain(self, name: str, display_name: str, processor_instance: str, config: configparser.ConfigParser) -> None:
+
+    def __add_domain(self, name: str, display_name: str, processor_instance: str,
+                     config: configparser.ConfigParser) -> None:
         new_domain = VitisPlatformDomain(
             client = self.__client,
             platform_name = f"{self.__name}_platform",
@@ -334,7 +338,7 @@ class VitisPlatform(object):
             config = config,
             workspace_path = self.__workspace_path,
         )
-        self.__domains.append(new_domain)     
+        self.__domains.append(new_domain)
 
 
     def __create_fsbl(self) -> None:
@@ -370,7 +374,7 @@ class VitisPlatform(object):
         platform = self.__client.get_component( # type: ignore
             name=f"{self.__name}_platform"
         )
-        log.debug(f"Executing Vitis build in workspace '{self.__workspace_path}': platform.build() for '{self.__name}_platform'")
+        log.debug(f"Vitis build in '{self.__workspace_path}': platform.build() for '{self.__name}_platform'")
         status = platform.build()
         log.info(f"Platform {self.__name} build completed with status: {status}")
         return status

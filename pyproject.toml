@@ -1,0 +1,37 @@
+# Tooling configuration for Vitis-On-Git.
+#
+# This project is a thin wrapper around AMD/Xilinx Vitis. It ships as a git
+# submodule (usually at src/Vitis) and is executed by the Vitis-bundled Python
+# via `vitis -s launch.py`. There is no package build, these tables just configure
+# the linters and type checker that run in CI.
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+extend-exclude = [
+    "__pycache__",
+    ".claude",
+    "Projects",
+    "logs",
+    ".wsdata",
+]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes (unused imports, undefined names, bad f-strings).
+select = ["E", "W", "F"]
+
+[tool.mypy]
+# Vitis 2024.1 bundles Python 3.10, which is also the minimum the current mypy
+# release can target.
+python_version = "3.10"
+# These modules are flat top-level scripts (run via `vitis -s launch.py`)
+explicit_package_bases = true
+mypy_path = "."
+# The `vitis` client package only exists inside a Vitis install, so it is never
+# importable in CI. Treat it (and any other missing import) as untyped.
+ignore_missing_imports = true
+# The codebase is intentionally lightly typed around the dynamic Vitis client.
+# Only type-check what is annotated.
+check_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = false

@@ -1,5 +1,4 @@
 import configparser
-import inspect
 import os
 import platform
 import subprocess
@@ -7,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+currentdir = os.path.dirname(os.path.abspath(__file__))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
 
@@ -24,6 +23,11 @@ _VITIS_VERSION = None
 
 def read_config(config_folder: str, filename: str) -> configparser.ConfigParser:
     config_path = os.path.join(config_folder, f"{filename}.conf")
+    if not os.path.isfile(config_path):
+        # Lazy import avoids a circular dependency. vitis_logging imports this
+        # module at load time.
+        from vitis_logging import Logger
+        Logger("paths").warning(f"Config file not found: {config_path}")
     config = configparser.ConfigParser(comment_prefixes=("#"))
     config.read(config_path)
     return config
@@ -32,30 +36,30 @@ def read_config(config_folder: str, filename: str) -> configparser.ConfigParser:
 def get_vitis_root() -> Tuple[str, str]:
     """
     Detect Vitis installation path and version using CLI location.
-    
+
     Returns:
         tuple: (vitis_root_path, version)
-    
+
     Raises:
         RuntimeError: If Vitis not found or version < 2024.1
     """
     global _VITIS_ROOT, _VITIS_VERSION
-    
+
     if _VITIS_ROOT and _VITIS_VERSION:
         return _VITIS_ROOT, _VITIS_VERSION
-    
+
     system = platform.system()
     if system == "Windows":
         cmd = ["where", "vitis"]
     else:  # Linux/Unix
         cmd = ["which", "vitis"]
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         vitis_cli_path = result.stdout.strip().split('\n')[0]  # Take first result
     except (subprocess.CalledProcessError, FileNotFoundError):
         raise RuntimeError("Vitis CLI not found. Ensure Vitis is installed and in PATH.")
-    
+
     # Expected: .../Xilinx/<version>/bin/vitis or .../Xilinx/Vitis/<version>/bin/vitis
     path_parts = Path(vitis_cli_path).parts
 
@@ -80,47 +84,47 @@ def get_vitis_root() -> Tuple[str, str]:
             raise RuntimeError(f"Vitis version {version} not supported. Requires 2024.1 or later.")
     except ValueError:
         raise RuntimeError(f"Could not parse Vitis version: {version}")
-    
+
     _VITIS_ROOT = vitis_root
     _VITIS_VERSION = version
-    
+
     return vitis_root, version
 
 
 def get_library_path(lib_name: str, lib_version: str) -> str:
     """
     Build path to a Vitis library.
-    
+
     Args:
         lib_name: Library name (e.g., 'xilflash', 'openamp')
         lib_version: Library version (e.g., 'v4_11')
-    
+
     Returns:
         str: Full path to library
     """
     vitis_root, _ = get_vitis_root()
-    
+
     sw_services_path = os.path.join(
         vitis_root, "data", "embeddedsw", "ThirdParty", "sw_services",
         f"{lib_name}_{lib_version}"
     )
     if os.path.exists(sw_services_path):
         return sw_services_path
-    
+
     lib_services_path = os.path.join(
         vitis_root, "data", "embeddedsw", "lib", "sw_services",
         f"{lib_name}_{lib_version}"
     )
     if os.path.exists(lib_services_path):
         return lib_services_path
-    
+
     bsp_path = os.path.join(
         vitis_root, "data", "embeddedsw", "lib", "bsp",
         f"{lib_name}_{lib_version}"
     )
     if os.path.exists(bsp_path):
         return bsp_path
-    
+
     raise FileNotFoundError(
         f"Library {lib_name}_{lib_version} not found in Vitis installation"
     )

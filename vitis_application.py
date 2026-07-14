@@ -1,328 +1,41 @@
-import argparse
 import configparser
 import json
 import os
-from pathlib import Path
-import platform
 import re
 import shutil
-import sys
-from typing import List, TypeVar, Dict, Any
+from typing import Any, Dict, List
 
 # Add package: Vitis Python CLI
 # import vitis # type: ignore
-vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import Logger
+from vitis_cmake import (
+    bool_to_cmake_flag,
+    create_folder_symlink,
+    create_symlink,
+    edit_cmake_variable,
+    expand_path_variables,
+    format_debug_level,
+    format_optimization_level,
+    parse_multiline_paths,
+    render_template,
+)
 from vitis_paths import (
-    read_config, parentdir, PROJECTS_PATH, HDL_DATA_PATH,
-    get_vitis_install_dir, get_workspace_root, get_src_root, normalize_path
+    read_config
 )
 
+
+vitis_client = Any
 
 log = Logger("application")
 
 TEMPLATES_PATH = os.path.join(os.path.dirname(__file__), "templates")
 
 
-def _edit_cmake_variable(file_path: str, variable_name: str, new_value: str) -> None:
-    """
-    Edit a CMake variable in UserConfig.cmake.
-
-    Args:
-        file_path: Path to UserConfig.cmake
-        variable_name: Variable name (e.g., 'USER_COMPILE_OPTIMIZATION_LEVEL')
-        new_value: New value to set
-    """
-    with open(file_path, 'r') as f:
-        content = f.read()
-
-    # Pattern to match: set(VARIABLE_NAME value)
-    # Handles both single line and multi-line values
-    pattern = rf'(set\({variable_name}\s+)([^\)]*)\)'
-
-    replacement = rf'\g<1>{new_value})'
-    new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE | re.DOTALL)
-
-    with open(file_path, 'w') as f:
-        f.write(new_content)
-
-
-def _parse_multiline_paths(config_value: str) -> List[str]:
-    """
-    Parse multi-line, comma-separated path list.
-    Supports mixed format: paths separated by newlines and/or commas.
-
-    Args:
-        config_value: Raw config value (may contain newlines and commas)
-
-    Returns:
-        List of cleaned, non-empty path strings
-    """
-    paths = [p.strip() for p in config_value.replace('\n', ',').split(',') if p.strip()]
-    return paths
-
-
-def _expand_path_variables(path: str) -> str:
-    """
-    Expand custom variables in path string.
-    CMake variables (like ${CMAKE_SOURCE_DIR}) are kept literal for CMake evaluation.
-
-    Supported custom variables:
-    - ${VITIS_INSTALL_DIR} -> Vitis installation root
-    - ${PROJECT_DIR} -> Workspace root
-    - ${PARENT_DIR} -> Source root
-
-    Args:
-        path: Path potentially containing variables
-
-    Returns:
-        Path with custom variables expanded, forward slashes
-    """
-    expanded = path
-
-    cmake_var_pattern = r'\$\{(CMAKE_|XILINX_)'
-    if re.search(cmake_var_pattern, path):
-        return normalize_path(path)
-
-    if '${VITIS_INSTALL_DIR}' in expanded:
-        expanded = expanded.replace('${VITIS_INSTALL_DIR}', get_vitis_install_dir())
-
-    if '${PROJECT_DIR}' in expanded:
-        expanded = expanded.replace('${PROJECT_DIR}', get_workspace_root())
-
-    if '${PARENT_DIR}' in expanded:
-        expanded = expanded.replace('${PARENT_DIR}', get_src_root())
-
-    return normalize_path(expanded)
-
-
-def _create_symlink(src_path: str, link_path: str) -> bool:
-    """
-    Create a symbolic link, with fallback to copy on Windows if permissions insufficient.
-
-    Args:
-        src_path: Source file path (must exist)
-        link_path: Symlink path to create
-
-    Returns:
-        True if symlink/copy created successfully, False otherwise
-    """
-    try:
-        if os.path.exists(link_path) or os.path.islink(link_path):
-            log.debug(f"Symlink already exists: {link_path}")
-            return True
-
-        if not os.path.exists(src_path):
-            log.warning(f"Source file does not exist: {src_path}")
-            return False
-
-        if platform.system() == 'Windows':
-            try:
-                # On Windows, try creating symlink (requires admin or developer mode)
-                os.symlink(src_path, link_path)
-                log.info(f"Created symlink: {os.path.basename(link_path)} -> {src_path}")
-                return True
-            except OSError:
-                # Fallback to copy if symlink fails (permission issues)
-                shutil.copy2(src_path, link_path)
-                log.info(f"Created copy (symlink failed): {os.path.basename(link_path)} -> {src_path}")
-                return True
-        else:
-            os.symlink(src_path, link_path)
-            log.info(f"Created symlink: {os.path.basename(link_path)} -> {src_path}")
-            return True
-
-    except Exception as e:
-        log.warning(f"Failed to create symlink {link_path}: {e}")
-        return False
-
-
-def _find_source_files_recursively(folder: str, extensions: List[str] = ['.c', '.S']) -> List[str]:
-    """
-    Recursively find source files in folder with given extensions.
-
-    Args:
-        folder: Directory to search recursively
-        extensions: List of file extensions to include (default: ['.c', '.S'])
-
-    Returns:
-        List of absolute file paths matching the extensions
-    """
-    source_files = []
-
-    if not os.path.exists(folder):
-        log.warning(f"Folder does not exist: {folder}")
-        return source_files
-
-    if not os.path.isdir(folder):
-        log.warning(f"Path is not a directory: {folder}")
-        return source_files
-
-    for root, dirs, files in os.walk(folder):
-        for file in files:
-            if any(file.endswith(ext) for ext in extensions):
-                source_files.append(os.path.join(root, file))
-
-    log.debug(f"Found {len(source_files)} source files in {folder}")
-    return source_files
-
-
-def _create_folder_symlink(src_folder: str, link_name: str, project_src_dir: str) -> bool:
-    """
-    Create folder symlink with fallback to directory recreation.
-
-    Tries to create a folder symlink first (preserves directory structure).
-    If that fails (Windows permissions), falls back to recreating the directory
-    structure with individual file symlinks.
-
-    Args:
-        src_folder: Source directory path (absolute)
-        link_name: Name for the symlinked folder in project (basename only)
-        project_src_dir: Project's src/ directory where symlink will be created
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        link_path = os.path.join(project_src_dir, link_name)
-
-        if os.path.exists(link_path) or os.path.islink(link_path):
-            log.debug(f"Folder symlink already exists: {link_path}")
-            return True
-
-        if not os.path.exists(src_folder):
-            log.warning(f"Source folder does not exist: {src_folder}")
-            return False
-
-        if not os.path.isdir(src_folder):
-            log.warning(f"Source path is not a directory: {src_folder}")
-            return False
-
-        try:
-            os.symlink(src_folder, link_path, target_is_directory=True)
-            log.info(f"Created folder symlink: {link_name}/ -> {src_folder}")
-            return True
-
-        except OSError as symlink_error:
-            log.debug(f"Folder symlink failed ({symlink_error}), recreating directory structure")
-
-            os.makedirs(link_path, exist_ok=True)
-
-            file_count = 0
-            for root, dirs, files in os.walk(src_folder):
-                rel_path = os.path.relpath(root, src_folder)
-
-                if rel_path == '.':
-                    dest_dir = link_path
-                else:
-                    dest_dir = os.path.join(link_path, rel_path)
-                    os.makedirs(dest_dir, exist_ok=True)
-
-                for file in files:
-                    if file.endswith(('.c', '.S')):
-                        src_file = os.path.join(root, file)
-                        dest_file = os.path.join(dest_dir, file)
-
-                        if _create_symlink(src_file, dest_file):
-                            file_count += 1
-
-            log.info(f"Created directory structure for {link_name}/ with {file_count} file symlinks")
-            return True
-
-    except Exception as e:
-        log.warning(f"Failed to create folder symlink {link_name}/: {e}")
-        return False
-
-
-def _bool_to_cmake_flag(enabled: bool, flag: str) -> str:
-    """Convert boolean to CMake flag or empty string."""
-    return flag if enabled else ""
-
-
-def _format_optimization_level(level: str) -> str:
-    """
-    Convert optimization level string to compiler flag.
-
-    Args:
-        level: Optimization level (none, O1, O2, O3, Os)
-
-    Returns:
-        Compiler flag (-O0, -O1, -O2, -O3, -Os) or empty string for none
-    """
-    level = level.strip()
-    level_lower = level.lower()
-
-    if level_lower == "none" or not level:
-        return ""
-    elif level.startswith("-"):
-        # If user provided dash, extract the part after it and normalize
-        level_part = level[1:]
-        level_lower_part = level_part.lower()
-        if level_lower_part == "none" or not level_part:
-            return ""
-        elif level_lower_part == "os":
-            return "-Os"
-        elif level_lower_part.startswith("o"):
-            return f"-{level_part.upper()}"
-        else:
-            return f"-O{level_part}"
-    elif level_lower == "os":
-        return "-Os"
-    elif level_lower.startswith("o"):
-        return f"-{level.upper()}"
-    else:
-        return f"-O{level}"
-
-
-def _format_debug_level(level: str) -> str:
-    """
-    Convert debug level string to compiler flag.
-
-    Args:
-        level: Debug level (none, g1, g2, g3)
-
-    Returns:
-        Compiler flag (-g1, -g2, -g3) or empty string for none
-    """
-    level = level.strip().lower()
-    if level == "none" or not level:
-        return ""
-    elif level.startswith("-"):
-        return level
-    elif level.startswith("g"):
-        return f"-{level}"
-    else:
-        return f"-g{level}"
-
-
-def _render_template(template_path: str, context: Dict[str, Any]) -> str:
-    """
-    Render a template file with {{placeholder}} replacements.
-
-    Args:
-        template_path: Path to template file
-        context: Dictionary of placeholder -> value mappings
-
-    Returns:
-        Rendered content
-    """
-    with open(template_path, 'r') as f:
-        content = f.read()
-
-    for key, value in context.items():
-        placeholder = f"{{{{{key}}}}}"
-        if isinstance(value, bool):
-            value = str(value).lower()
-        content = content.replace(placeholder, str(value))
-
-    return content
-
-
 class VitisDebugConfig(object):
     """Represents a single debug/launch configuration."""
 
-    def __init__(self, client: vitis_client, app_name: str, platform_name: str, workspace_path: str, # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, app_name: str, platform_name: str, workspace_path: str,
                  name: str, display_name: str, config: configparser.ConfigParser):
         self.__client = client
         self.__app_name = app_name
@@ -358,7 +71,10 @@ class VitisDebugConfig(object):
         fsbl = self.__config.get("hardware", "fsbl", fallback="")
         if not fsbl:
             # Auto-detect: ${workspace}/${platform}/export/${platform}/sw/boot/fsbl.elf
-            fsbl = f"${{workspaceFolder}}/{self.__platform_name}_platform/export/{self.__platform_name}_platform/sw/boot/fsbl.elf"
+            fsbl = (
+                f"${{workspaceFolder}}/{self.__platform_name}_platform"
+                f"/export/{self.__platform_name}_platform/sw/boot/fsbl.elf"
+            )
 
         ps_init_tcl = self.__config.get("hardware", "ps_init_tcl", fallback="")
         if not ps_init_tcl:
@@ -373,7 +89,7 @@ class VitisDebugConfig(object):
         stop_at_entry = self.__config.getboolean("behavior", "stop_at_entry", fallback=False)
         reset_processor = self.__config.getboolean("behavior", "reset_processor", fallback=True)
 
-        context = {
+        template_context = {
             "config_name": config_name,
             "debug_type": debug_type,
             "context": context,
@@ -390,7 +106,7 @@ class VitisDebugConfig(object):
         }
 
         template_path = os.path.join(TEMPLATES_PATH, "launch.json.template")
-        rendered = _render_template(template_path, context)
+        rendered = render_template(template_path, template_context)
 
         template_data = json.loads(rendered)
         return template_data["configurations"][0]
@@ -399,7 +115,12 @@ class VitisDebugConfig(object):
 class VitisApplication(object):
     """Represents a Vitis application component with compiler, linker, and debug configurations."""
 
-    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str, # pyright: ignore[reportInvalidTypeVarUse]
+    @property
+    def name(self) -> str:
+        """Public accessor for the application component name."""
+        return self.__name
+
+    def __init__(self, client: vitis_client, name: str, description: str, config_folder: str,
                  config: str, workspace_path: str):
         log.info(f"Defining an Application Component with name {name}")
         self.__client = client
@@ -514,94 +235,94 @@ class VitisApplication(object):
             if defined:
                 symbols = [s.strip() for s in defined.split(',')]
                 value = '\n'.join(f'"{s}"' for s in symbols)
-                _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
 
         if self.__config.has_option("compiler", "undefined_symbols"):
             undefined = self.__config.get("compiler", "undefined_symbols").strip()
             if undefined:
                 symbols = [s.strip() for s in undefined.split(',')]
                 value = '\n'.join(f'"{s}"' for s in symbols)
-                _edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
 
         # Directories
         if self.__config.has_option("compiler", "include_directories"):
             includes = self.__config.get("compiler", "include_directories").strip()
             if includes:
-                paths = _parse_multiline_paths(includes)
-                expanded_paths = [_expand_path_variables(p) for p in paths]
+                paths = parse_multiline_paths(includes)
+                expanded_paths = [expand_path_variables(p) for p in paths]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                _edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
 
         # Optimization
         if self.__config.has_option("compiler", "optimization_level"):
             level = self.__config.get("compiler", "optimization_level")
-            formatted_level = _format_optimization_level(level)
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted_level)
+            formatted_level = format_optimization_level(level)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted_level)
 
         if self.__config.has_option("compiler", "optimization_other_flags"):
             flags = self.__config.get("compiler", "optimization_other_flags")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_OTHER_FLAGS", flags)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_OTHER_FLAGS", flags)
 
         # Debugging
         if self.__config.has_option("compiler", "debug_level"):
             level = self.__config.get("compiler", "debug_level")
-            formatted_level = _format_debug_level(level)
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted_level)
+            formatted_level = format_debug_level(level)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted_level)
 
         if self.__config.has_option("compiler", "debug_other_flags"):
             flags = self.__config.get("compiler", "debug_other_flags")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_OTHER_FLAGS", flags)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_OTHER_FLAGS", flags)
 
         # Warnings
         if self.__config.has_option("compiler", "warnings_all"):
             enabled = self.__config.getboolean("compiler", "warnings_all")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
-                               _bool_to_cmake_flag(enabled, "-Wall"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
+                               bool_to_cmake_flag(enabled, "-Wall"))
 
         if self.__config.has_option("compiler", "warnings_extra"):
             enabled = self.__config.getboolean("compiler", "warnings_extra")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
-                               _bool_to_cmake_flag(enabled, "-Wextra"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
+                               bool_to_cmake_flag(enabled, "-Wextra"))
 
         if self.__config.has_option("compiler", "warnings_as_errors"):
             enabled = self.__config.getboolean("compiler", "warnings_as_errors")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
-                               _bool_to_cmake_flag(enabled, "-Werror"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
+                               bool_to_cmake_flag(enabled, "-Werror"))
 
         if self.__config.has_option("compiler", "warnings_check_syntax_only"):
             enabled = self.__config.getboolean("compiler", "warnings_check_syntax_only")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_CHECK_SYNTAX_ONLY",
-                               _bool_to_cmake_flag(enabled, "-fsyntax-only"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_CHECK_SYNTAX_ONLY",
+                               bool_to_cmake_flag(enabled, "-fsyntax-only"))
 
         if self.__config.has_option("compiler", "warnings_pedantic"):
             enabled = self.__config.getboolean("compiler", "warnings_pedantic")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC",
-                               _bool_to_cmake_flag(enabled, "-pedantic"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC",
+                               bool_to_cmake_flag(enabled, "-pedantic"))
 
         if self.__config.has_option("compiler", "warnings_pedantic_as_errors"):
             enabled = self.__config.getboolean("compiler", "warnings_pedantic_as_errors")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC_AS_ERRORS",
-                               _bool_to_cmake_flag(enabled, "-pedantic-errors"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC_AS_ERRORS",
+                               bool_to_cmake_flag(enabled, "-pedantic-errors"))
 
         if self.__config.has_option("compiler", "warnings_inhibit_all"):
             enabled = self.__config.getboolean("compiler", "warnings_inhibit_all")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_INHIBIT_ALL",
-                               _bool_to_cmake_flag(enabled, "-w"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_INHIBIT_ALL",
+                               bool_to_cmake_flag(enabled, "-w"))
 
         # Misc
         if self.__config.has_option("compiler", "verbose"):
             enabled = self.__config.getboolean("compiler", "verbose")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_VERBOSE",
-                               _bool_to_cmake_flag(enabled, "-v"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_VERBOSE",
+                               bool_to_cmake_flag(enabled, "-v"))
 
         if self.__config.has_option("compiler", "ansi"):
             enabled = self.__config.getboolean("compiler", "ansi")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_ANSI",
-                               _bool_to_cmake_flag(enabled, "-ansi"))
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_ANSI",
+                               bool_to_cmake_flag(enabled, "-ansi"))
 
         if self.__config.has_option("compiler", "other_flags"):
             flags = self.__config.get("compiler", "other_flags")
-            _edit_cmake_variable(userconfig_path, "USER_COMPILE_OTHER_FLAGS", flags)
+            edit_cmake_variable(userconfig_path, "USER_COMPILE_OTHER_FLAGS", flags)
 
         log.debug("Compiler settings configured successfully")
 
@@ -624,8 +345,8 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "source_files"):
             sources = self.__config.get("compiler", "source_files").strip()
             if sources:
-                source_list = _parse_multiline_paths(sources)
-                expanded_sources = [_expand_path_variables(s) for s in source_list]
+                source_list = parse_multiline_paths(sources)
+                expanded_sources = [expand_path_variables(s) for s in source_list]
 
                 # These will be found by aux_source_directory() automatically
                 project_src_dir = os.path.join(
@@ -639,7 +360,7 @@ class VitisApplication(object):
                     for source_file in expanded_sources:
                         filename = os.path.basename(source_file)
                         symlink_path = os.path.join(project_src_dir, filename)
-                        _create_symlink(source_file, symlink_path)
+                        create_symlink(source_file, symlink_path)
                 else:
                     log.warning(f"Project src directory not found: {project_src_dir}")
 
@@ -647,8 +368,8 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "source_folders"):
             folders = self.__config.get("compiler", "source_folders").strip()
             if folders:
-                folder_list = _parse_multiline_paths(folders)
-                expanded_folders = [_expand_path_variables(f) for f in folder_list]
+                folder_list = parse_multiline_paths(folders)
+                expanded_folders = [expand_path_variables(f) for f in folder_list]
 
                 project_src_dir = os.path.join(
                     self.__workspace_path,
@@ -669,7 +390,7 @@ class VitisApplication(object):
 
                         folder_name = os.path.basename(folder_path)
 
-                        _create_folder_symlink(folder_path, folder_name, project_src_dir)
+                        create_folder_symlink(folder_path, folder_name, project_src_dir)
                 else:
                     log.warning(f"Project src directory not found: {project_src_dir}")
 
@@ -733,45 +454,45 @@ class VitisApplication(object):
         # General linker options
         if self.__config.has_option("linker", "no_start_files"):
             enabled = self.__config.getboolean("linker", "no_start_files")
-            _edit_cmake_variable(userconfig_path, "USER_LINK_NO_START_FILES",
-                               _bool_to_cmake_flag(enabled, "-nostartfiles"))
+            edit_cmake_variable(userconfig_path, "USER_LINK_NO_START_FILES",
+                               bool_to_cmake_flag(enabled, "-nostartfiles"))
 
         if self.__config.has_option("linker", "no_default_libs"):
             enabled = self.__config.getboolean("linker", "no_default_libs")
-            _edit_cmake_variable(userconfig_path, "USER_LINK_NO_DEFAULT_LIBS",
-                               _bool_to_cmake_flag(enabled, "-nodefaultlibs"))
+            edit_cmake_variable(userconfig_path, "USER_LINK_NO_DEFAULT_LIBS",
+                               bool_to_cmake_flag(enabled, "-nodefaultlibs"))
 
         if self.__config.has_option("linker", "no_stdlib"):
             enabled = self.__config.getboolean("linker", "no_stdlib")
-            _edit_cmake_variable(userconfig_path, "USER_LINK_NO_STDLIB",
-                               _bool_to_cmake_flag(enabled, "-nostdlib"))
+            edit_cmake_variable(userconfig_path, "USER_LINK_NO_STDLIB",
+                               bool_to_cmake_flag(enabled, "-nostdlib"))
 
         if self.__config.has_option("linker", "omit_all_symbol_info"):
             enabled = self.__config.getboolean("linker", "omit_all_symbol_info")
-            _edit_cmake_variable(userconfig_path, "USER_LINK_OMIT_ALL_SYMBOL_INFO",
-                               _bool_to_cmake_flag(enabled, "-s"))
+            edit_cmake_variable(userconfig_path, "USER_LINK_OMIT_ALL_SYMBOL_INFO",
+                               bool_to_cmake_flag(enabled, "-s"))
 
         # Libraries
         if self.__config.has_option("linker", "libraries"):
             libs = self.__config.get("linker", "libraries").strip()
             if libs:
-                lib_list = [l.strip() for l in libs.split(',')]
-                value = '\n'.join(f'"{l}"' for l in lib_list)
-                _edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
+                lib_list = [lib.strip() for lib in libs.split(',')]
+                value = '\n'.join(f'"{lib}"' for lib in lib_list)
+                edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
 
         if self.__config.has_option("linker", "link_directories"):
             paths = self.__config.get("linker", "link_directories").strip()
             if paths:
-                path_list = _parse_multiline_paths(paths)
-                expanded_paths = [_expand_path_variables(p) for p in path_list]
+                path_list = parse_multiline_paths(paths)
+                expanded_paths = [expand_path_variables(p) for p in path_list]
                 value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                _edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
+                edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
 
         # Linker script
         if self.__config.has_option("linker", "linker_script"):
             script = self.__config.get("linker", "linker_script").strip()
             if script:
-                expanded_script = _expand_path_variables(script)
+                expanded_script = expand_path_variables(script)
 
                 project_src_dir = os.path.join(
                     self.__workspace_path,
@@ -789,20 +510,20 @@ class VitisApplication(object):
                         except Exception as e:
                             log.warning(f"Failed to remove existing linker script: {e}")
 
-                    if _create_symlink(expanded_script, linker_script_symlink):
-                        _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT",
+                    if create_symlink(expanded_script, linker_script_symlink):
+                        edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT",
                                            '"${CMAKE_SOURCE_DIR}/lscript.ld"')
                     else:
-                        log.warning(f"Failed to create linker script symlink, using absolute path")
-                        _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
+                        log.warning("Failed to create linker script symlink, using absolute path")
+                        edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
                 else:
-                    log.warning(f"Project src directory not found: {project_src_dir}, using absolute path for linker script")
-                    _edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
+                    log.warning(f"src dir not found: {project_src_dir}, using absolute path for linker script")
+                    edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
 
         # Misc linker flags
         if self.__config.has_option("linker", "other_flags"):
             flags = self.__config.get("linker", "other_flags")
-            _edit_cmake_variable(userconfig_path, "USER_LINK_OTHER_FLAGS", flags)
+            edit_cmake_variable(userconfig_path, "USER_LINK_OTHER_FLAGS", flags)
 
         log.debug("Linker settings configured successfully")
 
@@ -864,15 +585,15 @@ class VitisApplication(object):
         if self.__config.has_option("compiler", "source_folders"):
             folders = self.__config.get("compiler", "source_folders").strip()
             if folders:
-                folder_list = _parse_multiline_paths(folders)
-                expanded_folders = [_expand_path_variables(f) for f in folder_list]
+                folder_list = parse_multiline_paths(folders)
+                expanded_folders = [expand_path_variables(f) for f in folder_list]
                 source_paths.extend(expanded_folders)
 
         if self.__config.has_option("compiler", "source_files"):
             sources = self.__config.get("compiler", "source_files").strip()
             if sources:
-                source_list = _parse_multiline_paths(sources)
-                expanded_sources = [_expand_path_variables(s) for s in source_list]
+                source_list = parse_multiline_paths(sources)
+                expanded_sources = [expand_path_variables(s) for s in source_list]
                 source_paths.extend([os.path.dirname(f) for f in expanded_sources])
 
         project_dir = os.path.join(self.__workspace_path, self.__name)
@@ -932,7 +653,7 @@ class VitisApplication(object):
         app = self.__client.get_component( # type: ignore
             name=self.__name
         )
-        log.debug(f"Executing Vitis build in workspace '{self.__workspace_path}': application.build() for '{self.__name}'")
+        log.debug(f"Vitis build in '{self.__workspace_path}': application.build() for '{self.__name}'")
         status = app.build()
         log.info(f"Application {self.__name} build completed with status: {status}")
 

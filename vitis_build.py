@@ -10,17 +10,18 @@ import platform
 import re
 import shutil
 import subprocess
-from typing import List, TypeVar
+from typing import Any, List
 
 # Add package: Vitis Python CLI
 # import vitis # type: ignore
-vitis_client = TypeVar('vitis_client')
 
 from vitis_logging import Logger
 from vitis_paths import (
     read_config, PROJECTS_PATH, TOP_PATH, SRC_PATH, get_vitis_root
 )
-from vitis_application import _parse_multiline_paths, _expand_path_variables
+from vitis_cmake import parse_multiline_paths, expand_path_variables
+
+vitis_client = Any
 
 log = Logger("build")
 
@@ -63,15 +64,15 @@ def activate_project(project_name: str) -> bool:
     if config.has_option("compiler", "source_folders"):
         folders = config.get("compiler", "source_folders").strip()
         if folders:
-            folder_list = _parse_multiline_paths(folders)
-            expanded_folders = [_expand_path_variables(f) for f in folder_list]
+            folder_list = parse_multiline_paths(folders)
+            expanded_folders = [expand_path_variables(f) for f in folder_list]
             source_paths.extend(expanded_folders)
 
     if config.has_option("compiler", "source_files"):
         sources = config.get("compiler", "source_files").strip()
         if sources:
-            source_list = _parse_multiline_paths(sources)
-            expanded_sources = [_expand_path_variables(s) for s in source_list]
+            source_list = parse_multiline_paths(sources)
+            expanded_sources = [expand_path_variables(s) for s in source_list]
             source_paths.extend([os.path.dirname(f) for f in expanded_sources])
 
     source_paths.append(project_dir)
@@ -129,7 +130,7 @@ class ProjectBuilder(object):
     Build all components of a project (platform + applications).
     """
 
-    def __init__(self, client: vitis_client, project_name: str): # pyright: ignore[reportInvalidTypeVarUse]
+    def __init__(self, client: vitis_client, project_name: str):
         """
         Initialize project builder.
 
@@ -165,7 +166,6 @@ class ProjectBuilder(object):
 
     def __load_applications(self) -> List:
         """Load all application components for building."""
-        from vitis_application import VitisApplication
 
         applications = []
 
@@ -220,7 +220,7 @@ class ProjectBuilder(object):
         """
         log.info(f"Building entire project: {self.__project_name}")
 
-        log.info(f"Building platform...")
+        log.info("Building platform...")
         try:
             platform_status = self.__platform.build()
             if platform_status != 0:
@@ -231,7 +231,7 @@ class ProjectBuilder(object):
             return 1
 
         for app in self.__applications:
-            app_name = app._VitisApplication__name
+            app_name = app.name
             log.info(f"Building application {app_name}...")
             try:
                 app_status = app.build()
@@ -427,7 +427,7 @@ def build_project_vitis(client, project_name: str) -> int:
         return 1
 
 
-def build_project_all(client: vitis_client, project_name: str) -> int: # pyright: ignore[reportInvalidTypeVarUse]
+def build_project_all(client: vitis_client, project_name: str) -> int:
     """
     Build entire project (platform + all applications).
 
