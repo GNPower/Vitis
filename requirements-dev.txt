@@ -1,0 +1,9 @@
+# Development and CI tooling. Install with:
+#   python -m pip install -r requirements-dev.txt
+# then run the same checks CI runs:
+#   ruff check .
+#   mypy launch.py vitis_*.py
+#   pytest
+ruff
+mypy
+pytest

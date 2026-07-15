@@ -35,3 +35,8 @@ ignore_missing_imports = true
 check_untyped_defs = false
 warn_return_any = false
 warn_unused_ignores = false
+
+[tool.pytest.ini_options]
+# The modules are flat top-level scripts, so put the repo root on sys.path.
+pythonpath = ["."]
+testpaths = ["tests"]

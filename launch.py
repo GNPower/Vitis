@@ -27,14 +27,14 @@ def project_creator_wrapper(client: vitis_client, args: argparse.Namespace) -> N
 
 
 def create_platform_wrapper(args: argparse.Namespace) -> None:
-    """Roadmap placeholder for standalone platform creation (see ROADMAP.md)."""
-    log.error("CREATE_PLATFORM is not implemented yet. Use 'Do CREATE <name>'. See ROADMAP.md.")
+    """Placeholder for standalone platform creation, not implemented yet."""
+    log.error("CREATE_PLATFORM is not implemented yet. Use 'Do CREATE <name>' for the full flow.")
     sys.exit(1)
 
 
 def create_application_wrapper(args: argparse.Namespace) -> None:
-    """Roadmap placeholder for standalone application creation (see ROADMAP.md)."""
-    log.error("CREATE_APP is not implemented yet. Use 'Do CREATE <name>'. See ROADMAP.md.")
+    """Placeholder for standalone application creation, not implemented yet."""
+    log.error("CREATE_APP is not implemented yet. Use 'Do CREATE <name>' for the full flow.")
     sys.exit(1)
 
 

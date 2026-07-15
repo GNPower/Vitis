@@ -16,8 +16,8 @@ log = Logger("project")
 
 
 def create_project(client: vitis_client, project_name: str) -> None:
-    """Create a bare project scaffold. Not implemented yet (see ROADMAP.md)."""
+    """Create a bare project scaffold. Not implemented yet."""
     raise NotImplementedError(
         "create_project() is not implemented yet. Use 'Do CREATE <name>' for the full "
-        "project-creation flow. Standalone scaffolding is tracked in ROADMAP.md."
+        "project-creation flow."
     )
