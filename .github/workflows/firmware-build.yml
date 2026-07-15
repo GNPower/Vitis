@@ -1,0 +1,76 @@
+name: Firmware build (license-free)
+
+# Compile a real example project with the ARM GNU toolchain through
+# `Do BUILD --tools ninja --system-ninja`, with no AMD Vitis install. This is
+# possible because a project's generated platform export and build tree can be
+# committed once (the "platform-in-repo" approach) and rebuilt anywhere.
+#
+# It needs a committed CI fixture (a project whose Vitis-generated build tree is
+# checked in). Producing that fixture requires Vitis once, see ci/README.md.
+# Until the fixture exists, the build step is skipped so this workflow stays
+# green rather than failing on every run.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "examples/**"
+      - ".github/workflows/firmware-build.yml"
+  pull_request:
+    paths:
+      - "examples/**"
+
+env:
+  # Directory of the committed fixture workspace (contains src/Vitis, src/Top,
+  # and the pre-generated src/Projects build tree).
+  FIXTURE_DIR: examples/ci-fixture
+  FIXTURE_PROJECT: ci_example
+
+jobs:
+  build:
+    name: Build firmware without Vitis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check for CI fixture
+        id: fixture
+        shell: bash
+        run: |
+          if [ -d "$FIXTURE_DIR" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CI fixture at $FIXTURE_DIR yet, skipping the firmware build."
+          fi
+
+      - name: Install ARM GNU toolchain
+        if: steps.fixture.outputs.present == 'true'
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "12.2.Rel1"
+
+      - name: Install CMake and Ninja
+        if: steps.fixture.outputs.present == 'true'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+
+      - name: Build firmware (ninja, no Vitis)
+        if: steps.fixture.outputs.present == 'true'
+        shell: bash
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: ./src/Vitis/Do BUILD "$FIXTURE_PROJECT" --tools ninja --system-ninja
+
+      - name: Report ELF size
+        if: steps.fixture.outputs.present == 'true'
+        shell: bash
+        run: arm-none-eabi-size "$FIXTURE_DIR/src/Projects/$FIXTURE_PROJECT/build/$FIXTURE_PROJECT.elf"
+
+      - name: Upload ELF artifact
+        if: steps.fixture.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: ${{ env.FIXTURE_DIR }}/src/Projects/${{ env.FIXTURE_PROJECT }}/build/*.elf
+          if-no-files-found: warn
