@@ -1,0 +1,11 @@
+name: podman-runner-test
+on:
+  workflow_dispatch:
+jobs:
+  hello:
+    runs-on: [self-hosted, vitis]
+    steps:
+      - run: |
+          echo "Hello from $(hostname)"
+          uname -a
+          echo "JIT runner: one job, then gone."
