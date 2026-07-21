@@ -1,0 +1,13 @@
+name: xilinx-runner-check
+on: [workflow_dispatch]
+jobs:
+  check:
+    runs-on: [self-hosted, xilinx-2024.1]
+    steps:
+      - name: Toolchain smoke test
+        run: |
+          source /opt/Xilinx/Vitis/2024.1/settings64.sh
+          echo "DISPLAY=$DISPLAY  user=$(whoami)"
+          vivado -version
+          printf 'puts "xsct OK"\nexit\n' > check.tcl
+          xsct check.tcl

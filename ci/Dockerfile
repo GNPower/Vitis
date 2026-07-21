@@ -17,10 +17,10 @@ ARG VITIS_INSTALL_DIR=/opt/Xilinx
 
 # Dependencies the Vitis installer and the embedded toolchain need. The exact
 # list tracks the AMD "installation requirements" for your version, this covers
-# the common baseline.
+# the common requirements.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libtinfo5 libncurses5 libncursesw5 \
-        locales x11-apps xvfb git make ninja-build cmake \
+        locales x11-apps x11-utils xvfb git make ninja-build cmake \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 

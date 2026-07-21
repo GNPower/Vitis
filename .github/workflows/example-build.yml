@@ -1,0 +1,99 @@
+name: Example build (self-hosted Vitis)
+
+# End-to-end test of the tool and the self-hosted runner: generate a minimal
+# ZedBoard XSA with Vivado, then CREATE and BUILD the examples/zedboard 
+# project.
+#
+# Runner requirements (Linux, Vivado + Vitis 2024.1 installed):
+#   - the labels below, and settings64.sh at the paths sourced here
+#   - x11-utils and xvfb: the Vitis SDT/lopper flow needs an X display and
+#     xlsclients. Every tool step below runs under `xvfb-run` when present.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-and-build:
+    name: Generate XSA, then CREATE and BUILD the ZedBoard example
+    runs-on: [self-hosted, xilinx-2024.1]
+    steps:
+      - name: Check out the tool into src/Vitis
+        uses: actions/checkout@v4
+        with:
+          path: src/Vitis
+
+      - name: Runner diagnostics
+        shell: bash
+        run: |
+          source /opt/Xilinx/Vitis/2024.1/settings64.sh || true
+          echo "host=$(hostname)  user=$(whoami)  DISPLAY=${DISPLAY:-<unset>}"
+          for t in vivado vitis xsct xvfb-run xlsclients ninja; do
+            printf '  %-12s %s\n' "$t" "$(command -v "$t" || echo 'MISSING')"
+          done
+          vivado -version 2>&1 | head -1 || true
+
+      - name: Generate the ZedBoard XSA with Vivado
+        shell: bash
+        run: |
+          source /opt/Xilinx/Vitis/2024.1/settings64.sh
+          [ -f /opt/Xilinx/Vivado/2024.1/settings64.sh ] && source /opt/Xilinx/Vivado/2024.1/settings64.sh
+          run() { if command -v xvfb-run >/dev/null; then xvfb-run -a "$@"; else "$@"; fi; }
+          mkdir -p hdl/data
+          run vivado -mode batch -nojournal \
+            -source src/Vitis/examples/zedboard/hdl/make_xsa.tcl \
+            -tclargs "$(pwd)/hdl/data/ZedBoard.xsa"
+          test -f hdl/data/ZedBoard.xsa
+
+      - name: Assemble the example workspace
+        shell: bash
+        run: |
+          cp -r src/Vitis/examples/zedboard/src/Top         src/Top
+          cp -r src/Vitis/examples/zedboard/src/example_app src/example_app
+          echo "Workspace layout:"
+          find src hdl -maxdepth 3 -not -path '*/Vitis/*' | sort
+
+      - name: CREATE the project (platform + app, Vitis server)
+        shell: bash
+        run: |
+          source /opt/Xilinx/Vitis/2024.1/settings64.sh
+          run() { if command -v xvfb-run >/dev/null; then xvfb-run -a "$@"; else "$@"; fi; }
+          run ./src/Vitis/Do CREATE zedboard
+
+      - name: BUILD the application (ninja backend)
+        shell: bash
+        run: |
+          source /opt/Xilinx/Vitis/2024.1/settings64.sh
+          run() { if command -v xvfb-run >/dev/null; then xvfb-run -a "$@"; else "$@"; fi; }
+          run ./src/Vitis/Do BUILD hello --tools ninja
+
+      - name: Verify the ELF was produced
+        shell: bash
+        run: |
+          elf="src/Projects/hello/build/hello.elf"
+          if [ -f "$elf" ]; then
+            echo "Built $elf"
+            ls -la "$elf"
+          else
+            echo "Missing $elf"
+            exit 1
+          fi
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zedboard-example-firmware
+          path: src/Projects/hello/build/*.elf
+          if-no-files-found: error
+
+      - name: Upload logs and XSA (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zedboard-debug
+          path: |
+            hdl/data/ZedBoard.xsa
+            vivado.log
+            src/logs/**
+            src/Projects/logs/**
+          if-no-files-found: ignore
