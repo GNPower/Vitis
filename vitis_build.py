@@ -221,6 +221,7 @@ class ProjectBuilder(object):
         log.info(f"Building entire project: {self.__project_name}")
 
         log.info("Building platform...")
+        _clear_ninja_trees(os.path.join(PROJECTS_PATH, f"{self.__project_name}_platform"))
         try:
             platform_status = self.__platform.build()
             if platform_status != 0:
@@ -233,6 +234,7 @@ class ProjectBuilder(object):
         for app in self.__applications:
             app_name = app.name
             log.info(f"Building application {app_name}...")
+            _clear_ninja_trees(os.path.join(PROJECTS_PATH, app_name))
             try:
                 app_status = app.build()
                 if app_status != 0:
@@ -323,6 +325,79 @@ def find_ninja_executable(use_system: bool) -> str:
         return ninja_path
 
 
+def _ensure_ninja_tree(build_dir: str, ninja_path: str) -> int:
+    """Ensure ``build_dir`` has a ``build.ninja`` for a direct ninja build.
+
+    Vitis configures embedded CMake projects with the ``Unix Makefiles``
+    generator (it passes ``-G "Unix Makefiles"`` explicitly, and even an
+    exported ``CMAKE_GENERATOR=Ninja`` does not override it), so a freshly
+    CREATE-d project has a ``Makefile`` and no ``build.ninja``. Re-home the
+    existing CMake configuration onto the Ninja generator, preserving the
+    platform-export cache variables Vitis injected. Without those the toolchain
+    falls back to ``$ENV{ESW_REPO}/scripts/specs/arm/Xilinx.spec`` (with
+    ESW_REPO unset) and the compiler ABI test fails at ``project()``.
+
+    Returns 0 if a ninja tree already exists or was generated, non-zero on error.
+    """
+    build_ninja = os.path.join(build_dir, "build.ninja")
+    if os.path.exists(build_ninja):
+        return 0
+
+    cmake_cache = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.exists(cmake_cache):
+        log.error(f"CMakeCache.txt not found in {build_dir}")
+        log.error("Project must be created with Vitis first to configure CMake")
+        return 1
+
+    log.info(f"No build.ninja in {build_dir}; reconfiguring for the Ninja generator")
+
+    # Read the variables Vitis set into the Makefiles cache so we can carry them
+    # onto the Ninja configuration. Lines look like ``KEY:TYPE=VALUE``.
+    cache = {}
+    with open(cmake_cache) as cache_file:
+        for line in cache_file:
+            if line.startswith(("#", "//")) or ":" not in line or "=" not in line:
+                continue
+            cache[line.split(":", 1)[0]] = line.split("=", 1)[1].strip()
+
+    src_dir = cache.get("CMAKE_HOME_DIRECTORY")
+    if not src_dir:
+        log.error(f"CMAKE_HOME_DIRECTORY missing from {cmake_cache}")
+        return 1
+
+    preserve = [
+        "CMAKE_TOOLCHAIN_FILE",
+        "CMAKE_SPECS_FILE",
+        "CMAKE_INCLUDE_PATH",
+        "CMAKE_LIBRARY_PATH",
+        "CMAKE_MODULE_PATH",
+    ]
+    define_args = [f"-D{name}={cache[name]}" for name in preserve if cache.get(name)]
+
+    # Switching generators requires a clean binary directory.
+    try:
+        os.remove(cmake_cache)
+    except OSError:
+        pass
+    shutil.rmtree(os.path.join(build_dir, "CMakeFiles"), ignore_errors=True)
+
+    # Reuse the same cmake Vitis used (bundled) so the toolchain matches.
+    cmake_bin = cache.get("CMAKE_COMMAND", "cmake")
+    configure_cmd = [
+        cmake_bin, "-G", "Ninja", "-S", src_dir, "-B", build_dir,
+        f"-DCMAKE_MAKE_PROGRAM={ninja_path}", *define_args,
+    ]
+    log.debug(f"Reconfiguring for Ninja: {' '.join(configure_cmd)}")
+    result = subprocess.run(configure_cmd, capture_output=False)
+    if result.returncode != 0:
+        log.error(f"Ninja reconfigure failed in {build_dir}")
+        return result.returncode
+    if not os.path.exists(build_ninja):
+        log.error(f"Reconfigure did not produce build.ninja in {build_dir}")
+        return 1
+    return 0
+
+
 def build_project_ninja(project_name: str, clean: bool = False, use_system_ninja: bool = False) -> int:
     """
     Build a project directly using Ninja (no Vitis server required).
@@ -364,6 +439,10 @@ def build_project_ninja(project_name: str, clean: bool = False, use_system_ninja
 
     log.debug(f"Ninja path: {ninja_path}")
 
+    rc = _ensure_ninja_tree(build_dir, ninja_path)
+    if rc != 0:
+        return rc
+
     if clean:
         log.info("Cleaning build artifacts...")
         log.debug(f"Executing command in '{build_dir}': {ninja_path} clean")
@@ -391,6 +470,63 @@ def build_project_ninja(project_name: str, clean: bool = False, use_system_ninja
     return result.returncode
 
 
+def _clear_ninja_tree_for_vitis(build_dir: str) -> None:
+    """Clear a Ninja-configured build tree so a Vitis-server build can reconfigure.
+
+    A prior ``--tools ninja`` build reconfigures ``build_dir`` for the Ninja
+    generator (see ``_ensure_ninja_tree``). The Vitis server build reconfigures
+    with 'Unix Makefiles' and aborts with "generator Unix Makefiles does not
+    match the generator used previously: Ninja" if it finds that cache. When the
+    tree was left configured for a non-Make generator, remove the CMake cache and
+    the ninja artifacts so the Vitis build starts from a clean configuration.
+    """
+    cmake_cache = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.exists(cmake_cache):
+        return
+
+    generator = None
+    try:
+        with open(cmake_cache) as cache_file:
+            for line in cache_file:
+                if line.startswith("CMAKE_GENERATOR:"):
+                    generator = line.split("=", 1)[1].strip()
+                    break
+    except OSError:
+        return
+
+    if not generator or generator == "Unix Makefiles":
+        return
+
+    log.info(f"Clearing {generator} CMake tree in {build_dir} so the Vitis build can reconfigure")
+    try:
+        os.remove(cmake_cache)
+    except OSError:
+        pass
+    shutil.rmtree(os.path.join(build_dir, "CMakeFiles"), ignore_errors=True)
+    for stale in ("build.ninja", "rules.ninja", ".ninja_deps", ".ninja_log"):
+        try:
+            os.remove(os.path.join(build_dir, stale))
+        except OSError:
+            pass
+
+
+def _clear_ninja_trees(root: str) -> None:
+    """Clear every Ninja-configured CMake tree under ``root`` so a Vitis-server
+    build can reconfigure.
+
+    Vitis reconfigures with 'Unix Makefiles' and aborts on a generator mismatch
+    left by a prior ``--all --tools ninja`` build. A platform holds several such
+    trees (a BSP per domain, the FSBL), so sweep the whole subtree.
+    ``_clear_ninja_tree_for_vitis`` no-ops on Make trees, so this is safe to run
+    over an all-Make project too.
+    """
+    if not os.path.isdir(root):
+        return
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if "CMakeCache.txt" in filenames:
+            _clear_ninja_tree_for_vitis(dirpath)
+
+
 def build_project_vitis(client, project_name: str) -> int:
     """
     Build a project using the Vitis server.
@@ -409,6 +545,11 @@ def build_project_vitis(client, project_name: str) -> int:
         log.error(f"Project not found: {project_dir}")
         log.error(f"Run './Vitis/Do CREATE {project_name}' first")
         return 1
+
+    # A prior '--tools ninja' build leaves build/ configured for the Ninja
+    # generator; the Vitis server reconfigures with 'Unix Makefiles' and aborts
+    # on the mismatch. Clear a Ninja tree so Vitis can reconfigure cleanly.
+    _clear_ninja_tree_for_vitis(os.path.join(project_dir, "build"))
 
     try:
         app = client.get_component(name=project_name)
@@ -538,10 +679,6 @@ def build_project_all_ninja(
             log.error(f"BSP build directory not found: {bsp_build_dir}")
             return 1
 
-        if not os.path.exists(os.path.join(bsp_build_dir, "build.ninja")):
-            log.error(f"build.ninja not found in {bsp_build_dir}")
-            return 1
-
         exit_code = _run_ninja_in_directory(
             ninja_path, bsp_build_dir, clean, f"BSP ({domain_name})"
         )
@@ -631,10 +768,9 @@ def _run_ninja_in_directory(
     Returns:
         Exit code (0 = success)
     """
-    build_ninja = os.path.join(build_dir, "build.ninja")
-    if not os.path.exists(build_ninja):
-        log.error(f"build.ninja not found in {build_dir}")
-        return 1
+    rc = _ensure_ninja_tree(build_dir, ninja_path)
+    if rc != 0:
+        return rc
 
     if clean:
         log.info(f"Cleaning {component_name}...")
