@@ -211,6 +211,45 @@ brew install ninja
 
 **Minimum Ninja version:** 1.5 (recommended: 1.11.1+)
 
+#### UPDATE - Apply Configuration Changes to an Existing Project
+Re-reads the configuration files of a project that CREATE already made and applies them to the existing platform and application components, without recreating them.
+
+```bash
+./Vitis/Do UPDATE <project_name> [OPTIONS]
+```
+
+**Options:**
+- `--platform` - Update only the platform and its domains
+- `--application` - Update only the applications
+- `--no-build` - Skip the rebuild at the end
+
+Without `--platform` or `--application`, UPDATE does both. Passing both flags updates neither, and only the rebuild runs.
+
+**Examples:**
+
+```bash
+# Re-apply application.conf changes, then build with Ninja
+./Vitis/Do UPDATE MyProject --application --no-build
+./Vitis/Do BUILD MyProject --tools ninja
+
+# Re-apply every configuration file and rebuild with the Vitis server
+./Vitis/Do UPDATE MyProject
+```
+
+This will:
+1. Re-apply each domain's `domain.conf` (`[compiler] flags`, `[os]` stdin/stdout, `[library_N]`, `[driver_N]`) and regenerate its BSP. The XSA is not re-imported.
+2. For each application in `vitis.conf`, add and remove source links in `<app>/src` to match `source_files` and `source_folders`.
+3. Write every `[compiler]` and `[linker]` key into `UserConfig.cmake` and relink `lscript.ld`, with the same code CREATE uses.
+4. Rebuild the platform and every application with the Vitis server, unless `--no-build` is given.
+
+UPDATE doesn't change an application's `PLATFORM`, `DOMAIN` or `TEMPLATE`, doesn't rewrite `launch.json` from `[launch]` sections, and skips applications that CREATE hasn't made yet.
+
+**Before running UPDATE:**
+- The project must exist. UPDATE stops with an error when `src/Projects/<platform NAME>_platform` is missing.
+- Close the Vitis IDE. It holds the workspace lock that UPDATE needs.
+
+**Warning:** UPDATE deletes every `.c`, `.S` and `.h` file directly in `<app>/src`, and every subdirectory there that contains `.c` or `.S` files, unless `source_files` or `source_folders` lists it. Files a Vitis `TEMPLATE` generated count too. Keep application sources in your own tree and list them in `source_files` or `source_folders`, as `examples/zedboard` does.
+
 ### Configuration File Reference
 
 #### 1. vitis.conf (Top-Level Configuration)
@@ -241,17 +280,22 @@ Defines the platform hardware source and domain(s).
 
 ```ini
 [flow]
-SOURCE = xsa                          # Source type: xsa, fixed, or platform
-XSA = design_wrapper                  # XSA filename (without .xsa extension)
+# Source type: xsa, fixed, or platform
+SOURCE = xsa
+# XSA filename (without .xsa extension)
+XSA = design_wrapper
 
 [boot]
-BOOT_COMPONENTS = true                # Generate FSBL/boot components
+# Generate FSBL/boot components
+BOOT_COMPONENTS = true
 
 [domain]
 NAME = standalone_domain
 DISPLAY_NAME = Standalone Domain
-PROCESSOR_INSTANCE = ps7_cortexa9_0   # Target processor
-CONFIG = domain                       # Domain config file reference
+# Target processor
+PROCESSOR_INSTANCE = ps7_cortexa9_0
+# Domain config file reference
+CONFIG = domain
 
 # Optional: Additional domains
 [domain_1]
@@ -267,121 +311,165 @@ Configures the Board Support Package, libraries, drivers, and OS settings.
 
 ```ini
 [domain]
-OS = standalone                       # OS type: standalone, freertos, linux
+# OS type: standalone, freertos, linux
+OS = standalone
 
 [compiler]
-flags = -mcpu=cortex-a9 -mfpu=vfpv3  # Additional compiler flags
+# Additional compiler flags
+flags = -mcpu=cortex-a9 -mfpu=vfpv3
 
 [os]
-stdin = ps7_uart_1                    # Standard input peripheral
-stdout = ps7_uart_1                   # Standard output peripheral
+# Standard input peripheral
+stdin = ps7_uart_1
+# Standard output peripheral
+stdout = ps7_uart_1
 
 # Library configuration
 [library_0]
-name = xilffs                         # Library name
-enabled = true                        # Enable/disable built-in library
+# Library name
+name = xilffs
+# Enable/disable built-in library
+enabled = true
 
 [library_1]
-name = xilflash                       # External library
-version = v4_11                       # Library version
-param_serial_flash_family = 2         # Library parameters
+# External library
+name = xilflash
+# Library version
+version = v4_11
+# Library parameters
+param_serial_flash_family = 2
 
 # Driver configuration
 [driver_0]
-name = ttcps                          # Driver name
-version = v3_19                       # Driver version
+# Driver name
+name = ttcps
+# Driver version
+version = v3_19
 ```
 
 #### 4. application.conf (Application Configuration)
 
-Defines application settings, compiler/linker configuration.
+Defines one application component: the platform and domain it builds against, the sources it compiles, and the compiler and linker settings written into the generated `<app>/src/UserConfig.cmake`. Only the sections and keys below are read.
 
 ```ini
 [application]
-PLATFORM = my_platform                # Platform name (without _platform suffix)
-DOMAIN = standalone_domain            # Target domain name
-TEMPLATE = Hello World                # Optional: Vitis template
+# Platform NAME from vitis.conf, without the _platform suffix
+PLATFORM = zedboard
+# Domain NAME from platform.conf
+DOMAIN = standalone_ps7_cortexa9_0
+# Vitis application template such as hello_world. Empty creates a bare application.
+TEMPLATE =
 
-# Compiler symbols
-[compiler.symbols]
-defined = DEBUG,CUSTOM_FLAG           # Comma-separated defines
-undefined = NDEBUG                    # Comma-separated undefines
+[compiler]
+compile_definitions = DEBUG, BOARD_REV=3
+undefined_symbols = __clang__
+include_directories =
+    ${PARENT_DIR}/my_lib/include,
+    ${PROJECT_DIR}/zedboard_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/include
+source_files = ${PARENT_DIR}/example_app/main.c
+source_folders = ${PARENT_DIR}/my_lib/src
+optimization_level = O2
+# Two or more flags in one value need double quotes
+optimization_other_flags = "-ffunction-sections -fdata-sections"
+debug_level = g3
+debug_other_flags =
+warnings_all = true
+warnings_extra = true
+warnings_as_errors = false
+warnings_check_syntax_only = false
+warnings_pedantic = false
+warnings_pedantic_as_errors = false
+warnings_inhibit_all = false
+verbose = false
+ansi = false
+other_flags =
 
-# Include directories - Supports multi-line format and variable expansion
-[compiler.directories]
-include_paths = ../common/inc,./inc   # Single-line format (comma-separated)
+[linker]
+no_start_files = false
+no_default_libs = false
+no_stdlib = false
+omit_all_symbol_info = false
+libraries = m
+link_directories =
+linker_script = ${PARENT_DIR}/example_app/lscript.ld
+other_flags = -Wl,--gc-sections
 
-# Multi-line format example:
-# include_paths =
-#     ${PARENT_DIR}/DAM_LIB_FW/include,
-#     ${PROJECT_DIR}/my_platform/bsp/include
-#     ${VITIS_INSTALL_DIR}/gnu/aarch32/lin/gcc-arm-none-eabi/include
-
-# Source files - Compile .c files from custom locations
-[compiler.sources]
-source_files =                        # Multi-line, comma-separated source files
-# Example:
-#     ${PARENT_DIR}/DAM_LIB_FW/src/uart.c
-#     ${PARENT_DIR}/custom_code/main.c
-
-# Source folders - Recursively include all .c and .S files
-source_folders =                      # Multi-line, comma-separated directory paths
-# Example:
-#     ${PARENT_DIR}/DAM_LIB_FW/src
-#     ${PARENT_DIR}/PLDProcessorIPLib/Zynq7000/drivers
-
-# Optimization
-[compiler.optimization]
-level = -O2                           # Optimization level
-other_flags = -ffunction-sections     # Additional flags
-
-# Debug settings
-[compiler.debugging]
-level = -g3                           # Debug level
-other_flags =                         # Additional debug flags
-
-# Compiler warnings
-[compiler.warnings]
-all = true                            # Enable -Wall
-extra = true                          # Enable -Wextra
-as_errors = false                     # Enable -Werror
-pedantic = false                      # Enable -pedantic
-
-# Misc compiler flags
-[compiler.misc]
-verbose = false                       # Verbose output
-ansi = false                          # ANSI compliance
-other_flags =                         # Other custom flags
-
-# Linker libraries
-[linker.libraries]
-libraries = m,pthread                 # Comma-separated library names
-search_paths = /opt/lib               # Multi-line and variable expansion supported
-# Example:
-#     ${PROJECT_DIR}/my_platform/bsp/lib
-#     ${PARENT_DIR}/custom_libs
-
-# Linker script - Supports variable expansion
-[linker.script]
-file = ${CMAKE_SOURCE_DIR}/lscript.ld # Path to linker script (supports variables)
-
-# General linker settings
-[linker.general]
-no_start_files = false                # -nostartfiles
-no_default_libs = false               # -nodefaultlibs
-no_stdlib = false                     # -nostdlib
-omit_symbols = false                  # Strip symbols (-s)
-
-# Misc linker flags
-[linker.misc]
-other_flags =                         # Other custom flags
-
-# Launch configuration
+# Optional debug launch configurations: [launch], [launch_1], [launch_2], ...
 [launch]
-NAME = debug_config
-DISPLAY_NAME = Debug Configuration
-CONFIG = launch                       # Launch config file reference
+NAME = hw_debug
+DISPLAY_NAME = Debug Hardware
+# A launch config file in the same folder (see launch.conf), without .conf
+CONFIG = launch_hw
 ```
+
+**File format:**
+- Comments go on their own line and start with `#`. Text after a value, such as `O2  # note`, becomes part of the value.
+- A value continues on indented lines. Comment lines between its entries are skipped.
+- Write a literal `%` as `%%`. A single `%` stops the tool with an `InterpolationSyntaxError`.
+- Section names are case-sensitive; key names are not.
+
+**`[application]` keys:**
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `PLATFORM` | Yes | Platform `NAME` from `vitis.conf`, without the `_platform` suffix |
+| `DOMAIN` | Yes | Domain `NAME` from `platform.conf` |
+| `TEMPLATE` | No | Vitis application template, such as `hello_world`. Empty or missing creates a bare application |
+
+**`[compiler]` keys:**
+
+| Key | UserConfig.cmake variable | Value |
+|-----|---------------------------|-------|
+| `compile_definitions` | `USER_COMPILE_DEFINITIONS` | Comma-separated `NAME` or `NAME=value` entries |
+| `undefined_symbols` | `USER_UNDEFINED_SYMBOLS` | Comma-separated names, each passed as `-U<name>` |
+| `include_directories` | `USER_INCLUDE_DIRECTORIES` | Path list |
+| `optimization_level` | `USER_COMPILE_OPTIMIZATION_LEVEL` | `none`, `O0`, `O1`, `O2`, `O3` or `Os` |
+| `optimization_other_flags` | `USER_COMPILE_OPTIMIZATION_OTHER_FLAGS` | Flags |
+| `debug_level` | `USER_COMPILE_DEBUG_LEVEL` | `none`, `g1`, `g2` or `g3` |
+| `debug_other_flags` | `USER_COMPILE_DEBUG_OTHER_FLAGS` | Flags |
+| `warnings_all` | `USER_COMPILE_WARNINGS_ALL` | Boolean, `-Wall` |
+| `warnings_extra` | `USER_COMPILE_WARNINGS_EXTRA` | Boolean, `-Wextra` |
+| `warnings_as_errors` | `USER_COMPILE_WARNINGS_AS_ERRORS` | Boolean, `-Werror` |
+| `warnings_check_syntax_only` | `USER_COMPILE_WARNINGS_CHECK_SYNTAX_ONLY` | Boolean, `-fsyntax-only` |
+| `warnings_pedantic` | `USER_COMPILE_WARNINGS_PEDANTIC` | Boolean, `-pedantic` |
+| `warnings_pedantic_as_errors` | `USER_COMPILE_WARNINGS_PEDANTIC_AS_ERRORS` | Boolean, `-pedantic-errors` |
+| `warnings_inhibit_all` | `USER_COMPILE_WARNINGS_INHIBIT_ALL` | Boolean, `-w` |
+| `verbose` | `USER_COMPILE_VERBOSE` | Boolean, `-v` |
+| `ansi` | `USER_COMPILE_ANSI` | Boolean, `-ansi` |
+| `other_flags` | `USER_COMPILE_OTHER_FLAGS` | Flags |
+
+Two more `[compiler]` keys pick the sources and don't touch UserConfig.cmake:
+- `source_files`: path list of files, each linked into `<app>/src/`.
+- `source_folders`: path list of directories, each linked into `<app>/src/<folder>/`. Their `.c` and `.S` files compile recursively.
+
+Path lists follow [Path Variables and Multi-line Format](#path-variables-and-multi-line-format).
+
+**`[linker]` keys:**
+
+| Key | UserConfig.cmake variable | Value |
+|-----|---------------------------|-------|
+| `no_start_files` | `USER_LINK_NO_START_FILES` | Boolean, `-nostartfiles` |
+| `no_default_libs` | `USER_LINK_NO_DEFAULT_LIBS` | Boolean, `-nodefaultlibs` |
+| `no_stdlib` | `USER_LINK_NO_STDLIB` | Boolean, `-nostdlib` |
+| `omit_all_symbol_info` | `USER_LINK_OMIT_ALL_SYMBOL_INFO` | Boolean, `-s` |
+| `libraries` | `USER_LINK_LIBRARIES` | Comma-separated library names without the `lib` prefix, such as `m` for `libm.a` |
+| `link_directories` | `USER_LINK_DIRECTORIES` | Path list |
+| `linker_script` | `USER_LINKER_SCRIPT` | One path. The file is linked to `<app>/src/lscript.ld`, replacing the generated script |
+| `other_flags` | `USER_LINK_OTHER_FLAGS` | Flags |
+
+**`[launch]` sections:** `[launch]`, `[launch_1]`, `[launch_2]` and so on each need `NAME`, `DISPLAY_NAME` and `CONFIG`. `CONFIG` names a launch config file in the same folder, without `.conf`. CREATE writes one entry per section into `<app>/_ide/.theia/launch.json`; UPDATE leaves that file alone.
+
+**How CREATE and UPDATE apply the keys:**
+- A key missing from the file leaves its variable as it is: the template default after CREATE, the last written value after UPDATE. Commenting out a key doesn't undo it.
+- Booleans take `true` or `false` (also `yes`/`no`, `on`/`off`, `1`/`0`). `true` writes the flag and `false` clears the variable.
+- Flag values are copied into `set(...)` unchanged, and an empty value clears the variable. Wrap two or more flags in double quotes: unquoted, `-ffunction-sections -fdata-sections` reaches the compiler as `-ffunction-sections-fdata-sections`. Path variables such as `${PARENT_DIR}` aren't expanded in flag values.
+- An empty `compile_definitions` clears `USER_COMPILE_DEFINITIONS`. An empty `undefined_symbols`, `include_directories`, `libraries` or `link_directories` is ignored, so UPDATE can shorten these lists but not empty them.
+- `compile_definitions`, `undefined_symbols` and `libraries` split on commas only. A line break doesn't start a new entry.
+- `optimization_level = none` writes no `-O` flag, so the `-O2` in the domain's default BSP compiler flags applies; a Zynq-7000 standalone domain exports it through `cortexa9_toolchain.cmake`. Leaving the key out keeps the template default `-O0`. Use `O0` for an unoptimized build, since GCC uses the last `-O` on the command line.
+
+**Vitis 2024.1 template limits:**
+- The link options block in the generated UserConfig.cmake reads `USER_LINKER_NO_START_FILES`, `USER_LINKER_NO_DEFAULT_LIBS`, `USER_LINKER_NO_STDLIB` and `USER_LINKER_OMIT_ALL_SYMBOL_INFO`, but the variables are named `USER_LINK_*`. The four boolean linker keys never reach the linker. Put `-nostartfiles`, `-nodefaultlibs`, `-nostdlib` or `-s` in `[linker] other_flags` instead.
+- The application templates pass `USER_LINK_DIRECTORIES` as a single `-L"<dir>/"` argument, so `link_directories` takes one directory. Add more as `-L<dir>` flags in `[linker] other_flags`.
 
 #### 5. launch.conf (Debug Launch Configuration)
 
@@ -389,39 +477,51 @@ Defines debug/launch settings for VSCode/Theia IDE.
 
 ```ini
 [launch]
-name = Debug MyApp                    # Configuration name
-debug_type = baremetal-zynq          # Debug type
+# Configuration name
+name = Debug MyApp
+# Debug type
+debug_type = baremetal-zynq
 
 [target]
-core = ps7_cortexa9_0                # Target processor core
-context = zynq                        # Target context
+# Target processor core
+core = ps7_cortexa9_0
+# Target context
+context = zynq
 
 [hardware]
 # Optional: Auto-detected if not specified
-bitstream =                           # Path to bitstream
-fsbl =                               # Path to FSBL
-ps_init_tcl =                        # Path to PS init script
+# Path to bitstream
+bitstream =
+# Path to FSBL
+fsbl =
+# Path to PS init script
+ps_init_tcl =
 
 [behavior]
-reset_system = true                   # Reset system before debug
-program_device = true                 # Program FPGA
-reset_apu = false                     # Reset APU
-reset_processor = true                # Reset processor
-stop_at_entry = false                # Stop at main entry
+# Reset system before debug
+reset_system = true
+# Program FPGA
+program_device = true
+# Reset APU
+reset_apu = false
+# Reset processor
+reset_processor = true
+# Stop at main entry
+stop_at_entry = false
 ```
 
 ## Advanced Features
 
 ### Path Variables and Multi-line Format
 
-The tool supports custom path variables and multi-line format for include directories, library search paths, source files, and linker scripts.
+The path keys are `include_directories`, `source_files` and `source_folders` in `[compiler]`, and `link_directories` and `linker_script` in `[linker]`. All five expand the variables below, and all but `linker_script` take a list.
 
 #### Supported Variables
 
 - `${VITIS_INSTALL_DIR}` - Expands to your Vitis installation root (e.g., `E:/Xilinx/Vitis/2024.1`)
 - `${PROJECT_DIR}` - Expands to the workspace root (`src/Projects`)
 - `${PARENT_DIR}` - Expands to the source root (`src/`)
-- `${CMAKE_SOURCE_DIR}` - CMake variable (not expanded by Python, evaluated at build time)
+- `${CMAKE_...}` and `${XILINX_...}` - Left for CMake to evaluate at build time, such as `${CMAKE_SOURCE_DIR}`. A path that contains one is passed through unchanged, including any other variable in it.
 
 Variables are expanded with forward slashes for cross-platform CMake compatibility.
 
@@ -444,14 +544,17 @@ Path lists can be specified using:
       path3
   ```
 
+Lines starting with `#` between entries are skipped, so one entry can be commented out without touching the others.
+
 #### Example: Including BSP Headers
 
 ```ini
-[compiler.directories]
-include_paths =
+[compiler]
+include_directories =
     ${PARENT_DIR}/DAM_LIB_FW/include,
-    ${PROJECT_DIR}/ZedBoard_platform/zynq_fsbl/bsp/ps7_cortexa9_0/include
-    ${VITIS_INSTALL_DIR}/gnu/aarch32/lin/gcc-arm-none-eabi/arm-none-eabi/include
+    ${PROJECT_DIR}/ZedBoard_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/include
+    # Windows install layout
+    ${VITIS_INSTALL_DIR}/gnu/aarch32/nt/gcc-arm-none-eabi/aarch32-xilinx-eabi/usr/include
 ```
 
 #### Example: Compiling Source from /src Directory
@@ -459,7 +562,7 @@ include_paths =
 By default, Vitis expects application source files in the generated project directory. To compile `.c` files from your custom `/src` directories:
 
 ```ini
-[compiler.sources]
+[compiler]
 source_files =
     ${PARENT_DIR}/DAM_LIB_FW/src/uart.c
     ${PARENT_DIR}/DAM_LIB_FW/src/timer.c,
@@ -531,11 +634,13 @@ The tool automatically locates Xilinx libraries and drivers in your Vitis instal
 
 ```ini
 [library_0]
-name = openamp                        # Third-party library
+# Third-party library
+name = openamp
 version = v2023_2
 
 [driver_0]
-name = gpio                           # Custom driver version
+# Custom driver version
+name = gpio
 version = v4_9
 ```
 

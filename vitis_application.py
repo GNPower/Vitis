@@ -10,13 +10,11 @@ from typing import Any, Dict, List
 
 from vitis_logging import Logger
 from vitis_cmake import (
-    bool_to_cmake_flag,
+    apply_compiler_config,
+    apply_linker_config,
     create_folder_symlink,
     create_symlink,
-    edit_cmake_variable,
     expand_path_variables,
-    format_debug_level,
-    format_optimization_level,
     parse_multiline_paths,
     render_template,
 )
@@ -216,8 +214,6 @@ class VitisApplication(object):
 
     def __configure_compiler(self) -> None:
         """Configure compiler settings in UserConfig.cmake."""
-        log.debug("Configuring compiler settings")
-
         userconfig_path = os.path.join(
             self.__workspace_path,
             self.__name,
@@ -229,102 +225,7 @@ class VitisApplication(object):
             log.warning(f"UserConfig.cmake not found at {userconfig_path}, skipping compiler configuration")
             return
 
-        # Symbols
-        if self.__config.has_option("compiler", "compile_definitions"):
-            defined = self.__config.get("compiler", "compile_definitions").strip()
-            if defined:
-                symbols = [s.strip() for s in defined.split(',')]
-                value = '\n'.join(f'"{s}"' for s in symbols)
-                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
-
-        if self.__config.has_option("compiler", "undefined_symbols"):
-            undefined = self.__config.get("compiler", "undefined_symbols").strip()
-            if undefined:
-                symbols = [s.strip() for s in undefined.split(',')]
-                value = '\n'.join(f'"{s}"' for s in symbols)
-                edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
-
-        # Directories
-        if self.__config.has_option("compiler", "include_directories"):
-            includes = self.__config.get("compiler", "include_directories").strip()
-            if includes:
-                paths = parse_multiline_paths(includes)
-                expanded_paths = [expand_path_variables(p) for p in paths]
-                value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
-
-        # Optimization
-        if self.__config.has_option("compiler", "optimization_level"):
-            level = self.__config.get("compiler", "optimization_level")
-            formatted_level = format_optimization_level(level)
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted_level)
-
-        if self.__config.has_option("compiler", "optimization_other_flags"):
-            flags = self.__config.get("compiler", "optimization_other_flags")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_OTHER_FLAGS", flags)
-
-        # Debugging
-        if self.__config.has_option("compiler", "debug_level"):
-            level = self.__config.get("compiler", "debug_level")
-            formatted_level = format_debug_level(level)
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted_level)
-
-        if self.__config.has_option("compiler", "debug_other_flags"):
-            flags = self.__config.get("compiler", "debug_other_flags")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_OTHER_FLAGS", flags)
-
-        # Warnings
-        if self.__config.has_option("compiler", "warnings_all"):
-            enabled = self.__config.getboolean("compiler", "warnings_all")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
-                               bool_to_cmake_flag(enabled, "-Wall"))
-
-        if self.__config.has_option("compiler", "warnings_extra"):
-            enabled = self.__config.getboolean("compiler", "warnings_extra")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
-                               bool_to_cmake_flag(enabled, "-Wextra"))
-
-        if self.__config.has_option("compiler", "warnings_as_errors"):
-            enabled = self.__config.getboolean("compiler", "warnings_as_errors")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
-                               bool_to_cmake_flag(enabled, "-Werror"))
-
-        if self.__config.has_option("compiler", "warnings_check_syntax_only"):
-            enabled = self.__config.getboolean("compiler", "warnings_check_syntax_only")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_CHECK_SYNTAX_ONLY",
-                               bool_to_cmake_flag(enabled, "-fsyntax-only"))
-
-        if self.__config.has_option("compiler", "warnings_pedantic"):
-            enabled = self.__config.getboolean("compiler", "warnings_pedantic")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC",
-                               bool_to_cmake_flag(enabled, "-pedantic"))
-
-        if self.__config.has_option("compiler", "warnings_pedantic_as_errors"):
-            enabled = self.__config.getboolean("compiler", "warnings_pedantic_as_errors")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_PEDANTIC_AS_ERRORS",
-                               bool_to_cmake_flag(enabled, "-pedantic-errors"))
-
-        if self.__config.has_option("compiler", "warnings_inhibit_all"):
-            enabled = self.__config.getboolean("compiler", "warnings_inhibit_all")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_INHIBIT_ALL",
-                               bool_to_cmake_flag(enabled, "-w"))
-
-        # Misc
-        if self.__config.has_option("compiler", "verbose"):
-            enabled = self.__config.getboolean("compiler", "verbose")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_VERBOSE",
-                               bool_to_cmake_flag(enabled, "-v"))
-
-        if self.__config.has_option("compiler", "ansi"):
-            enabled = self.__config.getboolean("compiler", "ansi")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_ANSI",
-                               bool_to_cmake_flag(enabled, "-ansi"))
-
-        if self.__config.has_option("compiler", "other_flags"):
-            flags = self.__config.get("compiler", "other_flags")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_OTHER_FLAGS", flags)
-
-        log.debug("Compiler settings configured successfully")
+        apply_compiler_config(userconfig_path, self.__config)
 
     def __configure_sources(self) -> None:
         """Configure source files in UserConfig.cmake."""
@@ -437,9 +338,7 @@ class VitisApplication(object):
         log.info("CMakeLists.txt modified to use recursive source discovery (GLOB_RECURSE)")
 
     def __configure_linker(self) -> None:
-        """Configure linker settings in UserConfig.cmake."""
-        log.debug("Configuring linker settings")
-
+        """Configure linker settings in UserConfig.cmake and link the linker script."""
         userconfig_path = os.path.join(
             self.__workspace_path,
             self.__name,
@@ -451,81 +350,7 @@ class VitisApplication(object):
             log.warning(f"UserConfig.cmake not found at {userconfig_path}, skipping linker configuration")
             return
 
-        # General linker options
-        if self.__config.has_option("linker", "no_start_files"):
-            enabled = self.__config.getboolean("linker", "no_start_files")
-            edit_cmake_variable(userconfig_path, "USER_LINK_NO_START_FILES",
-                               bool_to_cmake_flag(enabled, "-nostartfiles"))
-
-        if self.__config.has_option("linker", "no_default_libs"):
-            enabled = self.__config.getboolean("linker", "no_default_libs")
-            edit_cmake_variable(userconfig_path, "USER_LINK_NO_DEFAULT_LIBS",
-                               bool_to_cmake_flag(enabled, "-nodefaultlibs"))
-
-        if self.__config.has_option("linker", "no_stdlib"):
-            enabled = self.__config.getboolean("linker", "no_stdlib")
-            edit_cmake_variable(userconfig_path, "USER_LINK_NO_STDLIB",
-                               bool_to_cmake_flag(enabled, "-nostdlib"))
-
-        if self.__config.has_option("linker", "omit_all_symbol_info"):
-            enabled = self.__config.getboolean("linker", "omit_all_symbol_info")
-            edit_cmake_variable(userconfig_path, "USER_LINK_OMIT_ALL_SYMBOL_INFO",
-                               bool_to_cmake_flag(enabled, "-s"))
-
-        # Libraries
-        if self.__config.has_option("linker", "libraries"):
-            libs = self.__config.get("linker", "libraries").strip()
-            if libs:
-                lib_list = [lib.strip() for lib in libs.split(',')]
-                value = '\n'.join(f'"{lib}"' for lib in lib_list)
-                edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
-
-        if self.__config.has_option("linker", "link_directories"):
-            paths = self.__config.get("linker", "link_directories").strip()
-            if paths:
-                path_list = parse_multiline_paths(paths)
-                expanded_paths = [expand_path_variables(p) for p in path_list]
-                value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
-
-        # Linker script
-        if self.__config.has_option("linker", "linker_script"):
-            script = self.__config.get("linker", "linker_script").strip()
-            if script:
-                expanded_script = expand_path_variables(script)
-
-                project_src_dir = os.path.join(
-                    self.__workspace_path,
-                    self.__name,
-                    "src"
-                )
-
-                if os.path.exists(project_src_dir):
-                    linker_script_symlink = os.path.join(project_src_dir, "lscript.ld")
-
-                    if os.path.exists(linker_script_symlink) or os.path.islink(linker_script_symlink):
-                        try:
-                            os.remove(linker_script_symlink)
-                            log.debug(f"Removed existing linker script at {linker_script_symlink}")
-                        except Exception as e:
-                            log.warning(f"Failed to remove existing linker script: {e}")
-
-                    if create_symlink(expanded_script, linker_script_symlink):
-                        edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT",
-                                           '"${CMAKE_SOURCE_DIR}/lscript.ld"')
-                    else:
-                        log.warning("Failed to create linker script symlink, using absolute path")
-                        edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
-                else:
-                    log.warning(f"src dir not found: {project_src_dir}, using absolute path for linker script")
-                    edit_cmake_variable(userconfig_path, "USER_LINKER_SCRIPT", f'"{expanded_script}"')
-
-        # Misc linker flags
-        if self.__config.has_option("linker", "other_flags"):
-            flags = self.__config.get("linker", "other_flags")
-            edit_cmake_variable(userconfig_path, "USER_LINK_OTHER_FLAGS", flags)
-
-        log.debug("Linker settings configured successfully")
+        apply_linker_config(userconfig_path, self.__config)
 
     def __configure_launch(self) -> None:
         """Configure debug/launch settings in launch.json."""

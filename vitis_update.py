@@ -18,8 +18,7 @@ from vitis_paths import read_config, PROJECTS_PATH, TOP_PATH
 from vitis_platform import VitisPlatformDomain
 from vitis_cmake import (
     parse_multiline_paths, expand_path_variables, create_symlink,
-    create_folder_symlink, edit_cmake_variable, format_optimization_level,
-    format_debug_level, bool_to_cmake_flag
+    create_folder_symlink, apply_compiler_config, apply_linker_config
 )
 
 
@@ -233,11 +232,8 @@ class ApplicationUpdater:
         self.__update_source_files()
         self.__update_source_folders()
 
-        # Update UserConfig.cmake
+        # Update UserConfig.cmake and the linker script symlink
         self.__update_userconfig()
-
-        # Update linker script symlink if needed
-        self.__update_linker_script()
 
         log.info(f"Application {self.__name} update complete")
 
@@ -368,110 +364,18 @@ class ApplicationUpdater:
             log.warning(f"Failed to remove {description}: {e}")
 
     def __update_userconfig(self) -> None:
-        """Update UserConfig.cmake with current configuration."""
+        """Update UserConfig.cmake and the linker script symlink with current configuration.
+
+        Calls the same functions as Do CREATE, so every [compiler] and [linker]
+        key that CREATE applies is applied here too.
+        """
         userconfig_path = os.path.join(self.__project_src_dir, "UserConfig.cmake")
 
         if not os.path.exists(userconfig_path):
             log.warning(f"UserConfig.cmake not found: {userconfig_path}")
             return
 
-        # Update include directories
-        if self.__config.has_option("compiler", "include_directories"):
-            includes = self.__config.get("compiler", "include_directories").strip()
-            if includes:
-                paths = parse_multiline_paths(includes)
-                expanded_paths = [expand_path_variables(p) for p in paths]
-                value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                edit_cmake_variable(userconfig_path, "USER_INCLUDE_DIRECTORIES", f"\n{value}\n")
-                log.info("Updated include directories")
-
-        # Update compile definitions
-        if self.__config.has_option("compiler", "compile_definitions"):
-            defined = self.__config.get("compiler", "compile_definitions").strip()
-            if defined:
-                symbols = [s.strip() for s in defined.split(',')]
-                value = '\n'.join(f'"{s}"' for s in symbols)
-                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", f"\n{value}\n")
-                log.info("Updated compile definitions")
-            else:
-                # Clear compile definitions if empty
-                edit_cmake_variable(userconfig_path, "USER_COMPILE_DEFINITIONS", "")
-
-        # Update undefined symbols
-        if self.__config.has_option("compiler", "undefined_symbols"):
-            undefined = self.__config.get("compiler", "undefined_symbols").strip()
-            if undefined:
-                symbols = [s.strip() for s in undefined.split(',')]
-                value = '\n'.join(f'"{s}"' for s in symbols)
-                edit_cmake_variable(userconfig_path, "USER_UNDEFINED_SYMBOLS", f"\n{value}\n")
-                log.info("Updated undefined symbols")
-
-        # Update optimization level
-        if self.__config.has_option("compiler", "optimization_level"):
-            level = self.__config.get("compiler", "optimization_level")
-            formatted = format_optimization_level(level)
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_OPTIMIZATION_LEVEL", formatted)
-
-        # Update debug level
-        if self.__config.has_option("compiler", "debug_level"):
-            level = self.__config.get("compiler", "debug_level")
-            formatted = format_debug_level(level)
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_DEBUG_LEVEL", formatted)
-
-        # Update warning flags
-        if self.__config.has_option("compiler", "warnings_all"):
-            enabled = self.__config.getboolean("compiler", "warnings_all")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_ALL",
-                                bool_to_cmake_flag(enabled, "-Wall"))
-
-        if self.__config.has_option("compiler", "warnings_extra"):
-            enabled = self.__config.getboolean("compiler", "warnings_extra")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_EXTRA",
-                                bool_to_cmake_flag(enabled, "-Wextra"))
-
-        if self.__config.has_option("compiler", "warnings_as_errors"):
-            enabled = self.__config.getboolean("compiler", "warnings_as_errors")
-            edit_cmake_variable(userconfig_path, "USER_COMPILE_WARNINGS_AS_ERRORS",
-                                bool_to_cmake_flag(enabled, "-Werror"))
-
-        # Update linker settings
-        if self.__config.has_option("linker", "libraries"):
-            libs = self.__config.get("linker", "libraries").strip()
-            if libs:
-                lib_list = [lib.strip() for lib in libs.split(',')]
-                value = '\n'.join(f'"{lib}"' for lib in lib_list)
-                edit_cmake_variable(userconfig_path, "USER_LINK_LIBRARIES", f"\n{value}\n")
-
-        if self.__config.has_option("linker", "link_directories"):
-            link_dirs = self.__config.get("linker", "link_directories").strip()
-            if link_dirs:
-                path_list = parse_multiline_paths(link_dirs)
-                expanded_paths = [expand_path_variables(p) for p in path_list]
-                value = '\n'.join(f'"{p}"' for p in expanded_paths)
-                edit_cmake_variable(userconfig_path, "USER_LINK_DIRECTORIES", f"\n{value}\n")
+        apply_compiler_config(userconfig_path, self.__config)
+        apply_linker_config(userconfig_path, self.__config)
 
         log.info("UserConfig.cmake updated")
-
-    def __update_linker_script(self) -> None:
-        """Update linker script symlink if configured."""
-        if not self.__config.has_option("linker", "linker_script"):
-            return
-
-        script = self.__config.get("linker", "linker_script").strip()
-        if not script:
-            return
-
-        expanded = expand_path_variables(script)
-        linker_symlink = os.path.join(self.__project_src_dir, "lscript.ld")
-
-        # Remove existing symlink/file
-        if os.path.exists(linker_symlink) or os.path.islink(linker_symlink):
-            try:
-                os.remove(linker_symlink)
-            except Exception as e:
-                log.warning(f"Failed to remove existing linker script: {e}")
-                return
-
-        # Create new symlink
-        create_symlink(expanded, linker_symlink)
-        log.info("Updated linker script symlink")
